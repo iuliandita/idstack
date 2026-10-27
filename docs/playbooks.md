@@ -6,6 +6,7 @@ Conventions used below:
 
 - **Gate** means the block defined in [plan.md section 4](plan.md#4-the-safety-model): exact command, pinned target, blast radius, rollback, verification query, evidence. Then stop.
 - **Calls** lists domain skills by name. A missing skill is reported as skipped with the inline fallback used.
+- Where a playbook has a Jev decision point (plan reading, release notes, outgoing claims, log filtering, suspect changes, decommission evidence, public hygiene), the step runs `idstack judge` as defined in [plan.md section 9](plan.md#9-jev-decision-layer). Jev answers only tighten a gate. Without a key, the step uses its deterministic checks and says Jev was not used.
 - Every playbook starts with two implicit steps: read the principles (pstack and idstack), and pin the target if the task touches a live system.
 - Every playbook ends with pstack's Writing the reply, plus idstack's reply sections: **Target**, **State now** (current state, not a change narrative), **Evidence** (each claim labeled verified or inferred), **Held** (gates not passed and what each needs), **Next**.
 

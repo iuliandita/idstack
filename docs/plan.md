@@ -14,15 +14,16 @@ This document is the design and roadmap. The per-playbook specs live in [playboo
 6. Playbook set
 7. Subagents and model routing
 8. Guardrails in the execution layer
-9. Packaging for Claude Code, Codex, and OpenCode
-10. Repository layout
-11. The `idstack` CLI
-12. Testing and evals
-13. Release and versioning
-14. Roadmap
-15. Risks
-16. Decisions
-17. Sources
+9. Jev decision layer
+10. Packaging for Claude Code, Codex, and OpenCode
+11. Repository layout
+12. The `idstack` CLI
+13. Testing and evals
+14. Release and versioning
+15. Roadmap
+16. Risks
+17. Decisions
+18. Sources
 
 ## 1. Goal and non-goals
 
@@ -253,7 +254,37 @@ Prose rules are not enough. idstack ships an optional guard hook.
 
 Exact hook output schemas are verified in Phase 2 before shipping.
 
-## 9. Packaging for Claude Code, Codex, and OpenCode
+## 9. Jev decision layer
+
+Many idstack steps need a small common-sense judgment over text: does this release note describe a breaking change, does this resource hold data, is this sentence supported by the evidence. Asking a reasoning model each time is slow and costly, and its answer comes back as prose. TypeSafe's Jev is a decision model built for this: code sends a `state` and typed questions, and Jev returns a calibrated probability per answer in about 100 ms, at $0.042 per million input tokens with output free. idstack uses it as an optional layer under the CLI. Code keeps the control flow and the decision; Jev supplies judgments.
+
+**Jev can make a gate stricter, never looser.** Its answers can force a stop, add a finding, or rank and narrow what gets read. They never approve a write, clear a finding, or establish that something is safe or unused. Every decision point has a defined outcome for "unsettled": a probability on or between the thresholds, a failed call, a missing answer, or missing evidence. Code checks for unsettled before it reads any probability. Thresholds start at 0.3 and 0.7 on the answer's probability, never on its `confidence`.
+
+| Decision point | Playbook | Questions (one per item) | Code rule | Unsettled |
+| --- | --- | --- | --- | --- |
+| Plan reading | `iac-change` | Per changed resource: holds persistent data? widens IAM permissions? Network exposure is checked in code. | Any > 0.3 fails the predicate grant and escalates plan reading. Low answers change nothing; the grant still needs every deterministic condition. | Grant fails; human gate |
+| Dependency bumps | `dependency-bump` | Per release-note bullet: breaking change? needs an operator step? removes a setting? renames a setting? Code checks whether a named setting is one the repo sets. | Auto-merge eligibility comes only from a deterministic policy. Any > 0.3 removes it. | Eligibility removed; gate |
+| Outgoing messages | `incident` | Per claim: supported by the evidence? | Any claim < 0.7 is flagged for rewording before the operator sends. | Flagged |
+| Log filtering | `live-diagnosis` | Per chunk: related to the symptom? | Keep chunks > 0.3 for the reasoning model. Keep the full logs and widen when the kept chunks do not explain the symptom. | Chunk kept |
+| Suspect changes | `live-diagnosis` | Per recent change: could it plausibly cause this alert? | Rank and examine read-only from the top. Rollbacks go through a gate. | Ranked first |
+| Decommission evidence | `decommission` | Per evidence item: shows the target is still in use? | Any > 0.3 means park, not tear down. Low answers do not prove disuse. | Park |
+| Ambiguous commands | guard hook | Only for commands that name an infra tool or run a script the regex cannot classify: changes remote state? deletes data? targets production? | Baseline allow. Any > 0.3 escalates to ask. Never allows a command the regex flagged. | Ask |
+| Public hygiene | `opening-a-pr` overlay | Per regex candidate: a private hostname or IP rather than a public example? | Every candidate blocks until an allowlist or the operator clears it. Jev orders the list and can add candidates. | Top of list |
+
+**Implementation.**
+
+- All question wording, criteria, thresholds, and the pinned model ID live in one place: `src/questions/<battery>.json`, one file per decision point. Pin `jev-1.14.0`, not `jev-latest`, because thresholds are tuned against a version.
+- `idstack judge <battery> <input.json>` builds the request, calls `POST /v1/systemone` with the standard library, applies the code rule, and prints the outcome per item with `--json`. Playbooks call this command, never the API directly.
+- The key comes from `TYPESAFE_API_KEY`. Without a key, `judge` exits with a distinct status, the playbook falls back to deterministic checks plus the reasoning model, and the reply says Jev was not used.
+- `--trace` writes the exact request and response to the evidence log so any answer can be rerun.
+- The data-boundary rules (section 7) apply to TypeSafe like any other provider. TypeSafe does not train on requests; zero data retention is an enterprise option.
+- Jev is weak at arithmetic, counting, dates, version comparison, multi-step reasoning, and text written to steer it. Those stay in code or with a reasoning model, and attacker-writable text (logs, issue bodies, release notes) only ever tightens a gate.
+
+**Probe, 2026-10-28.** A synthetic probe ran the plan-reading and dependency-bump batteries against `jev-1.14.0`: 24 requests, 70 answers, 13,196 input tokens, about $0.0006. 66 answers matched the expected label, 3 did not, 1 was unsettled. All four misses leaned toward risk (false positives), so under the tighten-only rule they would add a gate, never skip one. Two misses were arguably label errors (a replaced `random_password` does change a live credential; "removed X, use Y instead" does ask the operator to change something). One was a real confusion: a `0.0.0.0/0` SSH rule read as widening IAM, which supports keeping network checks in code and naming the network-versus-permissions case in the criteria. A release note with an embedded instruction to "automated reviewers" was still flagged as breaking (0.78), which is closer to the threshold than comfortable. The probe set is small and synthetic; it shows the shape works, not that the thresholds are right.
+
+**Evals.** Each battery gets a labeled fixture set in `fixtures/jev/<battery>/`, including hard cases, "nothing applies" cases, and adversarial text. CI validates the question files and fixtures offline. Live calibration runs on demand and before any model version change, and threshold changes are checked on cases not used for tuning.
+
+## 10. Packaging for Claude Code, Codex, and OpenCode
 
 **What is portable.** Skill folders (`SKILL.md` with `name` and `description`, plus `references/`, `scripts/`, `assets/`) are read by all three harnesses. Playbooks are plain markdown inside the router skill, so they are portable too.
 
@@ -276,7 +307,7 @@ Exact hook output schemas are verified in Phase 2 before shipping.
 
 - A root `plugin.json` is Codex's portable manifest; OpenAI-specific settings go in its `extensions.com.openai` object. Codex also reads `.claude-plugin/marketplace.json` as a legacy-compatible marketplace, and `.agents/plugins/marketplace.json` natively. idstack ships both marketplace files.
 - Codex plugins carry skills and hooks, not agents. `idstack install --harness codex` copies the generated agent TOML files into `~/.codex/agents/`.
-- Codex has no plugin dependencies. pstack must be installed separately (see open decision 1). `id-mode`'s requirements check catches a missing pstack.
+- Codex has no plugin dependencies. pstack must be installed separately (see decision 1 in section 17). `id-mode`'s requirements check catches a missing pstack.
 - Slash-only skills: generate `agents/openai.yaml` with `policy.allow_implicit_invocation: false` per skill.
 
 **OpenCode.**
@@ -287,7 +318,7 @@ Exact hook output schemas are verified in Phase 2 before shipping.
 
 **Generation.** Root files are the Claude Code plugin. A build step generates the Codex and OpenCode artifacts (agent TOML and Markdown, `openai.yaml` per skill, guard plugin) from neutral sources. CI fails when generated files are stale, the same rule pstack uses.
 
-## 10. Repository layout
+## 11. Repository layout
 
 ```
 idstack/
@@ -317,12 +348,14 @@ idstack/
   src/
     agents/*.md                        neutral agent sources
     guard/patterns.toml                one pattern list for every harness
+    questions/<battery>.json           Jev question wording, criteria, thresholds, model pin
   harness/
     codex/agents/*.toml                generated
     codex/skills/*/agents/openai.yaml  generated
     opencode/agents/*.md               generated
     opencode/plugins/idstack-guard.ts  generated
   fixtures/                            toy infra repo for tests and evals
+    jev/<battery>/                     labeled cases per Jev decision point
   tests/
   docs/
     plan.md
@@ -332,7 +365,7 @@ idstack/
   LICENSE
 ```
 
-## 11. The `idstack` CLI
+## 12. The `idstack` CLI
 
 A single-file Python 3 CLI with only the standard library, shipped in `bin/`. Every command supports `--json` for agents.
 
@@ -344,9 +377,11 @@ A single-file Python 3 CLI with only the standard library, shipped in `bin/`. Ev
 | `idstack install --harness codex\|opencode` | Installs the non-plugin pieces for that harness. Idempotent. `--dry-run` prints the plan. |
 | `idstack plan-summary <plan.json>` | Deterministic Terraform plan summary: counts by action, destroys and replaces, addresses outside a given scope, and a pass or fail against a predicate grant. The agent uses this instead of reading raw plan JSON. |
 
+| `idstack judge <battery> <input.json>` | Runs one Jev decision point (section 9): builds the request from `src/questions/<battery>.json`, applies the code rule, and prints the outcome per item, including unsettled. Distinct exit status when no key is configured. `--trace` writes the exact request and response to the evidence log. |
+
 `plan-summary` is the first lever (pstack's `build-the-lever`): predicate grants depend on a mechanical check, not the model's reading of a large JSON file.
 
-## 12. Testing and evals
+## 13. Testing and evals
 
 **Static, every PR.** `idstack check`, `idstack build --check`, `claude plugin validate` (verify the exact command name in Phase 1), actionlint, zizmor, gitleaks, and the Python unit tests for the CLI.
 
@@ -369,7 +404,7 @@ Eval runs cost tokens, so they do not run per PR. pstack's `eval` playbook is th
 
 **Dogfood.** Each playbook is run on at least one real task before it leaves draft: homelab first, then work-style repos with plan-only access.
 
-## 13. Release and versioning
+## 14. Release and versioning
 
 - Default branch `develop`, release branch `main`. Every change lands by PR, squash merge.
 - `v0.x.y` while pre-1.0, cut from `develop`. `v1.0.0` when the exit criteria in Phase 6 hold, cut from `main`.
@@ -378,7 +413,7 @@ Eval runs cost tokens, so they do not run per PR. pstack's `eval` playbook is th
 - `CHANGELOG.md` from Phase 1.
 - Track pstack. A scheduled CI job installs the latest pstack and runs the requirements check and static evals, so a pstack rename (a playbook file, a principle, `setup-pstack`) shows up as a failing job, not a user report.
 
-## 14. Roadmap
+## 15. Roadmap
 
 Each phase ends with a verifiable exit check.
 
@@ -391,11 +426,11 @@ Exit: CI green on an empty plugin. Plan approved.
 Exit: `/plugin install idstack@idstack` pulls pstack and loads cleanly in a fresh Claude Code profile. `doctor` passes. `id-mode` routes an `investigation` request to pstack's playbook unchanged.
 
 **Phase 2: change path, wave 1.**
-`iac-change`, `gitops-change`, `dependency-bump`, `queue-burndown`, `live-diagnosis`, `change-verifier`, guard hook for Claude Code (log-only default), predicate grants.
-Exit: each playbook dogfooded on one real task. Fixture evals pass for the gate and grant scenarios.
+`iac-change`, `gitops-change`, `dependency-bump`, `queue-burndown`, `live-diagnosis`, `change-verifier`, guard hook for Claude Code (log-only default), predicate grants. `idstack judge` with the plan-reading, dependency-bump, log-filtering, and suspect-change batteries and their labeled fixtures.
+Exit: each playbook dogfooded on one real task. Fixture evals pass for the gate and grant scenarios. Each Jev battery has at least 30 labeled cases and no false negatives on its held-out set.
 
 **Phase 3: change path, wave 2.**
-`upgrade`, `edge-change`, `host-config-change`, `incident`, `decommission`, `secret-rotation`, `env-promotion`, overlays `bug-fix`, `babysit`, `shipping`, `autonomous-run`, `pause-safely`.
+`upgrade`, `edge-change`, `host-config-change`, `incident`, `decommission`, `secret-rotation`, `env-promotion`, overlays `bug-fix`, `babysit`, `shipping`, `autonomous-run`, `pause-safely`. Jev batteries for outgoing-message claims, decommission evidence, and public hygiene.
 Exit: dogfooded. `incident` used for at least one real event or a game-day.
 
 **Phase 4: assurance.**
@@ -403,13 +438,13 @@ Exit: dogfooded. `incident` used for at least one real event or a game-day.
 Exit: one full assurance pass on the homelab with findings filed as issues.
 
 **Phase 5: harnesses.**
-`idstack build` generators, Codex packaging (marketplace, agent TOML, `openai.yaml`), OpenCode install and guard plugin, `/idstack:setup` with model detection, cross-harness role dispatch and data boundaries, nightly evals, pstack-tracking job.
+`idstack build` generators, Codex packaging (marketplace, agent TOML, `openai.yaml`), OpenCode install and guard plugin, `/idstack:setup` with model detection, cross-harness role dispatch and data boundaries, Jev battery for ambiguous guard commands, nightly evals, pstack-tracking job.
 Exit: install and a scripted smoke scenario pass on all three harnesses.
 
 **Phase 6: v1.0.**
 Guide (`docs/guide/`), every playbook out of draft, no open P1 issues, two weeks of daily use without a gate bypass.
 
-## 15. Risks
+## 16. Risks
 
 | Risk | Mitigation |
 | --- | --- |
@@ -420,9 +455,11 @@ Guide (`docs/guide/`), every playbook out of draft, no open P1 issues, two weeks
 | Domain skills drift from what playbooks expect | `skill-map.md` names the sections relied on. Missing or changed skill is reported as skipped, not passed. |
 | Private details leak into public files | Pre-push hygiene check in `opening-a-pr` overlay. gitleaks in CI. Playbooks use placeholders only. |
 | Codex or OpenCode formats change | Generated artifacts, one place to update, smoke scenario per harness |
-| Cursor-specific wording in pstack confuses other harnesses | Rely on pstack's adapter on Claude Code. For Codex and OpenCode, depends on the pstack distribution chosen (open decision 1). |
+| Cursor-specific wording in pstack confuses other harnesses | Rely on pstack's adapter on Claude Code. For Codex and OpenCode, depends on the pstack distribution chosen (decision 1 in section 17). |
+| A Jev answer loosens a gate | Tighten-only rule enforced in `idstack judge` code, not in playbook prose. Every decision point defines its unsettled outcome. Fixture sets include adversarial text. |
+| Jev model update shifts answers | Pin the model ID. Rerun every battery's labeled set before moving the pin. |
 
-## 16. Decisions
+## 17. Decisions
 
 Decided 2026-10-27.
 
@@ -431,10 +468,14 @@ Decided 2026-10-27.
 3. **Auto-routing:** slash-only `id-mode`, like pstack. No session-start hint.
 4. **Router name:** `id-mode`, agent `id-agent`.
 5. **Agent apply policy:** the agent may run a gated command after explicit approval in the current turn, or under a predicate grant. Repo instructions can forbid it entirely, and the strictest rule wins.
+6. **Jev:** use it as an optional decision layer under the CLI (section 9), tighten-only. Decided 2026-10-28.
 
-## 17. Sources
+## 18. Sources
 
 - pstack: https://github.com/cursor/plugins/tree/main/pstack (playbooks, `dyl-stack`, generator, adapter docs read from the repo at version 0.15.35)
+- TypeSafe models, pricing, limits: https://docs.typesafe.ai/models.md
+- TypeSafe build guide: https://docs.typesafe.ai/concepts/how-to-build-with-system-one.md
+- Jev 1.13 weak spots: https://docs.typesafe.ai/model-jaggedness/jev-1.13.md
 - Claude Code plugin dependencies: https://code.claude.com/docs/en/plugins/dependencies.md
 - Claude Code plugins reference: https://code.claude.com/docs/en/plugins-reference
 - Claude Code marketplaces: https://code.claude.com/docs/en/plugin-marketplaces
