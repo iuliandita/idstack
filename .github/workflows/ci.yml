@@ -1,0 +1,110 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [develop, main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Repo checks
+        run: python3 scripts/check.py
+
+      - name: Shellcheck
+        run: shellcheck install.sh
+
+      - name: Install actionlint
+        env:
+          ACTIONLINT_VERSION: "1.7.12"
+          ACTIONLINT_SHA256: "8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8"
+        run: |
+          mkdir -p "$HOME/.local/bin"
+          curl -fsSLo /tmp/actionlint.tar.gz "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
+          echo "${ACTIONLINT_SHA256}  /tmp/actionlint.tar.gz" | sha256sum --check
+          tar -xzf /tmp/actionlint.tar.gz -C "$HOME/.local/bin" actionlint
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Lint workflows
+        run: actionlint -color
+
+  install:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24"
+
+      - name: Install harness CLIs
+        run: |
+          prefix="$RUNNER_TEMP/harness"
+          mkdir -p "$prefix"
+          cp .github/tools/harness/package.json .github/tools/harness/package-lock.json "$prefix/"
+          npm ci --prefix "$prefix" --ignore-scripts --no-audit --no-fund
+          # Claude Code fetches its native binary in postinstall; run only that script.
+          (cd "$prefix/node_modules/@anthropic-ai/claude-code" && node install.cjs)
+          echo "$prefix/node_modules/.bin" >> "$GITHUB_PATH"
+
+      - name: Show harness versions
+        run: |
+          claude --version
+          codex --version
+
+      - name: Validate plugin manifests
+        run: claude plugin validate .
+
+      - name: Isolate harness state
+        run: |
+          root="$RUNNER_TEMP/idstack-home"
+          {
+            echo "CLAUDE_CONFIG_DIR=$root/claude"
+            echo "CODEX_HOME=$root/codex"
+            echo "AGENTS_SKILLS_DIR=$root/agents/skills"
+            echo "OPENCODE_SKILLS_DIR=$root/opencode/skills"
+            echo "IDSTACK_CACHE_DIR=$root/cache"
+          } >> "$GITHUB_ENV"
+          mkdir -p "$root/codex"
+
+      - name: Check reports missing before install
+        run: |
+          set +e
+          ./install.sh --harness claude,codex,opencode --source "$GITHUB_WORKSPACE" --check
+          rc=$?
+          set -e
+          if [ "$rc" -ne 1 ]; then
+            echo "::error::expected exit 1 before install, got $rc"
+            exit 1
+          fi
+
+      - name: Install
+        run: ./install.sh --harness claude,codex,opencode --source "$GITHUB_WORKSPACE"
+
+      - name: Check after install
+        run: ./install.sh --harness claude,codex,opencode --source "$GITHUB_WORKSPACE" --check
+
+      - name: Reinstall is a no-op
+        run: ./install.sh --harness claude,codex,opencode --source "$GITHUB_WORKSPACE"
+
+      - name: Uninstall
+        run: |
+          ./install.sh --harness claude,codex,opencode --source "$GITHUB_WORKSPACE" --uninstall
+          test -f "$AGENTS_SKILLS_DIR/.pstack-install.json"
+          test ! -e "$OPENCODE_SKILLS_DIR/.idstack-install.json"

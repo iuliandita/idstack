@@ -1,0 +1,8 @@
+{
+  "name": "idstack-ci-harness",
+  "private": true,
+  "dependencies": {
+    "@anthropic-ai/claude-code": "2.1.311",
+    "@openai/codex": "0.164.0"
+  }
+}

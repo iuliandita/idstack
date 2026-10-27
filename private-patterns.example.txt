@@ -1,0 +1,5 @@
+# One literal per line. Copy to private-patterns.txt (gitignored) and fill in
+# private domains, hostnames, IPs, and paths that must never land in tracked files.
+# scripts/check.py fails on any match. Lines starting with # are ignored.
+example.internal
+10.0.0.

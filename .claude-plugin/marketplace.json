@@ -1,0 +1,20 @@
+{
+  "name": "idstack",
+  "description": "Marketplace for idstack, infra and SRE playbooks layered on pstack",
+  "owner": {
+    "name": "iuliandita",
+    "email": "iulian.dita@gmail.com"
+  },
+  "allowCrossMarketplaceDependenciesOn": ["cursor-plugins"],
+  "plugins": [
+    {
+      "name": "idstack",
+      "description": "Infra, DevOps, and SRE playbooks for coding agents, layered on pstack",
+      "version": "0.1.0",
+      "source": "./",
+      "dependencies": [
+        { "name": "pstack", "marketplace": "cursor-plugins" }
+      ]
+    }
+  ]
+}
