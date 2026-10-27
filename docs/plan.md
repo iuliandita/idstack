@@ -21,7 +21,7 @@ This document is the design and roadmap. The per-playbook specs live in [playboo
 13. Release and versioning
 14. Roadmap
 15. Risks
-16. Open decisions
+16. Decisions
 17. Sources
 
 ## 1. Goal and non-goals
@@ -222,6 +222,17 @@ Three subagents. Each is generated per harness from one neutral source file.
 
 Defaults never name a specific vendor model in shipped files. A setup skill (`/idstack:setup`) detects available models and writes the rule file, like `setup-pstack`.
 
+**Roles can point at another harness.** Operators with several subscriptions route cheap bulk work to one provider and verification to another family. A role line may therefore name a model the current harness cannot run natively (for example, a Codex model while running in Claude Code). Dispatch order for a role:
+
+1. Native subagent, when the current harness serves the model.
+2. The host's delegation tool, when one is available (for example, an orchestrator's delegate-task call).
+3. The other harness's headless CLI (`codex exec`, `opencode run`), with the model flag. Exact flags are verified in Phase 5.
+4. Fall back to the role's tier on the current harness, and say so in the reply.
+
+A cross-harness worker gets a self-contained brief (scope, target, read-only commands allowed, expected output), because each dispatch costs a context handoff. It needs the same pinned target, read-only credentials, and guard as the parent. Without those, it falls back to step 4.
+
+**Data boundaries.** Some content must not reach some providers: work estates often forbid sending repo content, logs, or plan output to third-party or foreign-hosted models. The setup rule file can list path prefixes or repo markers with providers they exclude. Before dispatching a role, idstack checks the boundary and falls back to an allowed provider at the same tier. A boundary check that cannot decide counts as excluded. Live evidence (logs, plans, describe output) carries hostnames and sometimes secrets, so the boundary applies to evidence collection first.
+
 ## 8. Guardrails in the execution layer
 
 Prose rules are not enough. idstack ships an optional guard hook.
@@ -392,7 +403,7 @@ Exit: dogfooded. `incident` used for at least one real event or a game-day.
 Exit: one full assurance pass on the homelab with findings filed as issues.
 
 **Phase 5: harnesses.**
-`idstack build` generators, Codex packaging (marketplace, agent TOML, `openai.yaml`), OpenCode install and guard plugin, `/idstack:setup` with model detection, nightly evals, pstack-tracking job.
+`idstack build` generators, Codex packaging (marketplace, agent TOML, `openai.yaml`), OpenCode install and guard plugin, `/idstack:setup` with model detection, cross-harness role dispatch and data boundaries, nightly evals, pstack-tracking job.
 Exit: install and a scripted smoke scenario pass on all three harnesses.
 
 **Phase 6: v1.0.**
@@ -411,13 +422,15 @@ Guide (`docs/guide/`), every playbook out of draft, no open P1 issues, two weeks
 | Codex or OpenCode formats change | Generated artifacts, one place to update, smoke scenario per harness |
 | Cursor-specific wording in pstack confuses other harnesses | Rely on pstack's adapter on Claude Code. For Codex and OpenCode, depends on the pstack distribution chosen (open decision 1). |
 
-## 16. Open decisions
+## 16. Decisions
 
-1. **pstack on Codex and OpenCode.** Upstream ships Claude Code and Cursor only. Options: (a) require a community mirror such as `backnotprop/pstack`, pinned to a commit, (b) require `michael-denyer/pstack-claude`, which already handles Codex hooks, (c) run without pstack on those harnesses, with a reduced built-in principle set. Recommendation: (a) for now, pinned, with `doctor` checking the pin. It is the most complete and tracks upstream, but it is a third-party dependency.
-2. **Guard default.** Opt-in (recommended) or on by default in log-only mode.
-3. **Auto-routing.** Slash-only `id-mode` (recommended, matches pstack) or an optional session-start hint that suggests `id-mode` for infra tasks.
-4. **Router name.** `id-mode` (recommended) or something else.
-5. **Agent apply policy default.** Recommended: the agent may run a gated command after explicit approval in the current turn, or under a predicate grant. Repo instructions can forbid it entirely.
+Decided 2026-10-27.
+
+1. **pstack on Codex and OpenCode:** require the community mirror `backnotprop/pstack`, pinned to a tested commit. `doctor` checks the pin. Revisit if upstream ships Codex or OpenCode packaging. Rejected: `michael-denyer/pstack-claude` (narrower), and running without pstack (forks the methodology).
+2. **Guard default:** opt-in. `/idstack:setup` offers it and skips when another pre-tool-use guard is present.
+3. **Auto-routing:** slash-only `id-mode`, like pstack. No session-start hint.
+4. **Router name:** `id-mode`, agent `id-agent`.
+5. **Agent apply policy:** the agent may run a gated command after explicit approval in the current turn, or under a predicate grant. Repo instructions can forbid it entirely, and the strictest rule wins.
 
 ## 17. Sources
 
