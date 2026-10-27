@@ -1,0 +1,16 @@
+# private agent context
+AGENTS.md
+CLAUDE.md
+AGENTS.local.md
+.claude/
+.handoff/
+docs/local/
+/ROADMAP.md
+
+# local run artifacts
+*.tfplan
+tfplan
+plan.json
+decisions.tsv
+.audit/
+__pycache__/
