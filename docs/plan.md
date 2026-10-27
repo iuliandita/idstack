@@ -106,7 +106,7 @@ This is the core of idstack. Every action falls into one of three classes.
 | Reversible write | branch, commit, PR or MR, local render, scratch namespace restore, draft message, issue | Free, unless it triggers a deploy (see below). |
 | State-mutating | `apply`, `destroy`, state surgery, `sync` to a shared env, `delete`, `scale`, `drain`, `rollout restart`, `helm upgrade`, Ansible without `--check`, firewall rule change, DNS record change, secret rotation, reboot, `qm destroy`, sending an external message, merging where merge triggers a deploy | Always gated. |
 
-**Merge can be a write.** In repos where a merge to the main branch deploys (CI applies Ansible on push, ArgoCD auto-syncs), the merge is state-mutating. Every change playbook's first step finds out whether merge equals deploy for the target repo and records it.
+**Git operations can be writes.** Actions are classed by their downstream effect. A push, PR, merge, or workflow dispatch that triggers automation able to deploy or change infrastructure (CI applies Ansible on push, preview environments on PR, ArgoCD auto-sync on merge) is state-mutating, because that automation runs with its own credentials and the agent's read-only credentials do not stop it. Every change playbook's first step finds out which git events deploy in the target repo and records it.
 
 **A gate** shows, in one block:
 
