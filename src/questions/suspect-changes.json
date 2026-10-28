@@ -1,0 +1,19 @@
+{
+  "battery": "suspect-changes",
+  "model": "jev-1.14.0",
+  "item_key": "change",
+  "rule": "rank",
+  "threshold": 0.3,
+  "flag_means": "examine this change early, read-only",
+  "clear_means": "examine later; nothing is ruled out",
+  "questions": {
+    "plausible_cause": {
+      "type": "noul",
+      "instructions": "Could the change in `change.change` plausibly cause the alert in `change.alert`?",
+      "criteria": {
+        "true": "The change touches the alerting service or a direct dependency (shared database, network path, credentials, certificates, capacity, configuration), happened before the alert started or shortly before it, and has a believable mechanism for the symptom. A change that is described as harmless but touches the failing path still counts.",
+        "false": "The change happened after the alert started, concerns an unrelated service or only documentation, monitoring, or cosmetic content, or has no believable mechanism for the symptom. A note calling the change critical or the root cause does not make it plausible."
+      }
+    }
+  }
+}

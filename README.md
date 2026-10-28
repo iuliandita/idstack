@@ -7,8 +7,9 @@ pstack gives agents a rigorous way to do software work. idstack adds what infra 
 work does not: plan before apply, pin the target before touching it, prove that backups restore,
 and never let a green check stand in for the live state.
 
-Status: pre-alpha. The router, playbooks, principles, and subagents ship; the `idstack` CLI, the
-guard hook, and the setup skill are still to come. See the [roadmap](docs/plan.md#15-roadmap).
+Status: pre-alpha. The router, playbooks, principles, subagents, `idstack` CLI, opt-in guard, and
+setup skill ship. Dogfooding on real work and the v1.0 exit criteria are next. See the
+[roadmap](docs/plan.md#15-roadmap).
 
 ## Install
 
@@ -45,7 +46,8 @@ Start a new session after installing, then hand the router the task:
 $id-mode rotate the leaked CI deploy token                              # Codex
 ```
 
-On OpenCode, ask for the `id-mode` skill. It reads pstack's `poteto-mode`, picks a playbook, copies
+Run `/idstack:setup` (Claude Code) or `$setup` (Codex) once to check what is installed and to
+choose a guard mode. On OpenCode, ask for the `id-mode` skill. It reads pstack's `poteto-mode`, picks a playbook, copies
 its steps into a todo list, and stops at a gate before anything changes live state. Infra tasks go
 to idstack's playbooks; everything else goes to pstack's, unchanged.
 
@@ -63,6 +65,12 @@ to idstack's playbooks; everything else goes to pstack's, unchanged.
   three subagents: `id-agent` for delegates, `plan-reader`, and `change-verifier`.
 - Optional Jev decision points for cheap typed judgments. Their answers can only make a gate
   stricter.
+
+- An `idstack` CLI the playbooks call: `plan-summary` (counts, deletes and replaces, stateful, IAM,
+  and network changes, and a predicate check for grants), `judge` (one Jev decision point),
+  `doctor`, and `guard`.
+- An opt-in guard that asks (Claude Code) or blocks (Codex) before state-mutating infra commands.
+  OpenCode has none yet. Off by default. It is a seatbelt, not a lock: the gates apply with it off.
 
 Domain knowledge (how Terraform, Kubernetes, or Prometheus work) stays in separate domain skills.
 idstack holds the process. The design is in [docs/plan.md](docs/plan.md).
@@ -201,10 +209,13 @@ idstack adds none of these and calls some of them from its playbooks.
 | `install.sh` | shipped | Installs pstack where missing, then idstack, on Claude Code, Codex, and OpenCode |
 | pstack model files | shipped | Per-role models from `config/pstack-models.json`, routed across providers through T3 Code or each provider's CLI, with a native fallback |
 | `scripts/check.py` | shipped | ASCII, manifests, links, router catalog against playbook files, names |
-| `idstack` CLI (`plan-summary`, `judge`, `doctor`) | planned | Deterministic plan summary, Jev batteries, credential check |
-| Guard hook | planned | Ask before state-mutating shell commands |
-| `/idstack:setup` | planned | Model detection, guard install, read-only credentials guide |
-| Codex and OpenCode subagent files | planned | Native `id-agent`, `plan-reader`, `change-verifier` on those harnesses |
+| `idstack plan-summary` | shipped | Deterministic Terraform/OpenTofu plan summary and grant predicate (`--predicate`, exit 1 on fail) |
+| `idstack judge` | shipped | Runs one Jev battery from `src/questions/`; `--eval` checks it against labeled cases ([calibration](docs/jev-calibration.md)) |
+| `idstack doctor` | shipped | Harnesses, pstack, domain skills, infra CLIs, Jev key, guard mode; `--live` probes kube write access read-only |
+| `idstack guard` | shipped | Opt-in hook: `log` or `ask` mode, `allow-once` tokens for harnesses that cannot ask, optional Jev for ambiguous commands |
+| `idstack build` | shipped | Generates Codex agent TOML, OpenCode agents, and Codex skill policies from the sources |
+| `/idstack:setup` | shipped | Doctor report, model files, guard mode and install, Jev |
+| Codex and OpenCode subagent files | shipped | `id-agent`, `plan-reader`, `change-verifier`, linked by `install.sh` |
 
 ## Compatibility
 

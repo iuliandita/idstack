@@ -24,6 +24,12 @@ jobs:
       - name: Repo checks
         run: python3 scripts/check.py
 
+      - name: Unit tests
+        run: python3 -m unittest discover -s tests -v
+
+      - name: Generated files are current
+        run: python3 bin/idstack build --check
+
       - name: Shellcheck
         run: shellcheck install.sh
 
@@ -80,6 +86,8 @@ jobs:
             echo "AGENTS_SKILLS_DIR=$root/agents/skills"
             echo "OPENCODE_SKILLS_DIR=$root/opencode/skills"
             echo "IDSTACK_CACHE_DIR=$root/cache"
+            echo "IDSTACK_BIN_DIR=$root/bin"
+            echo "OPENCODE_AGENTS_DIR=$root/opencode/agents"
           } >> "$GITHUB_ENV"
           mkdir -p "$root/codex"
 
@@ -98,7 +106,10 @@ jobs:
         run: ./install.sh --harness claude,codex,opencode --source "$GITHUB_WORKSPACE"
 
       - name: Check after install
-        run: ./install.sh --harness claude,codex,opencode --source "$GITHUB_WORKSPACE" --check
+        run: |
+          ./install.sh --harness claude,codex,opencode --source "$GITHUB_WORKSPACE" --check
+          "$IDSTACK_BIN_DIR/idstack" plan-summary fixtures/plans/create-only.plan.json --scope '*' --predicate
+          test -L "$CODEX_HOME/agents/plan-reader.toml"
 
       - name: Reinstall is a no-op
         run: ./install.sh --harness claude,codex,opencode --source "$GITHUB_WORKSPACE"
@@ -108,3 +119,5 @@ jobs:
           ./install.sh --harness claude,codex,opencode --source "$GITHUB_WORKSPACE" --uninstall
           test -f "$AGENTS_SKILLS_DIR/.pstack-install.json"
           test ! -e "$OPENCODE_SKILLS_DIR/.idstack-install.json"
+          test ! -e "$IDSTACK_BIN_DIR/idstack"
+          test ! -e "$CODEX_HOME/agents/plan-reader.toml"

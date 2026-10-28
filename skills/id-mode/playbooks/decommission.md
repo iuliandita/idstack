@@ -6,7 +6,7 @@ For removing or parking a VM, host, app, cluster resource, bucket, DNS name, or 
 
 1. Pin the target per `references/targets.md`, and find which git events deploy in the repos that define it.
 2. Gather evidence from several independent sources: traffic and connection metrics, logs, recent logins, DNS lookups, firewall and NAT rules pointing at it, references in IaC and config repos, tickets and docs, and dependents in the cluster. Use cheap read-only delegates for bulk logs.
-   Jev decision point (optional): per evidence item, ask "shows the target is still in use?". Any answer above 0.3 means park, not tear down. Low answers never prove disuse.
+   Jev decision point (optional): `idstack judge decommission-evidence <evidence.json>`. Any `flag` or `unsettled` item (still in use above 0.3) means park, not tear down. Low answers never prove disuse.
 3. Decide park or tear down. Parking keeps data and config and stops the workload. Teardown removes it. A component another service depends on is parked, not torn down.
 4. **Gate:** the reversible step first (scale to zero through git, power off, rename with an `OFF-` prefix, disable the DNS name). Run **Opening a PR** when the step goes through git.
 5. Agree a soak period with the operator. Watch for breakage and for new traffic.

@@ -1,0 +1,19 @@
+{
+  "battery": "public-hygiene",
+  "model": "jev-1.14.0",
+  "item_key": "candidate",
+  "rule": "rank",
+  "threshold": 0.3,
+  "flag_means": "listed first for the operator; every candidate still blocks until cleared",
+  "clear_means": "listed later; it still blocks until cleared",
+  "questions": {
+    "private_value": {
+      "type": "noul",
+      "instructions": "Is `candidate.text` a real private value (an internal hostname, a private or internal IP address, an internal URL, a person's private email, a secret) rather than a public example or placeholder?",
+      "criteria": {
+        "true": "RFC1918 addresses in config or scripts, internal-looking domains (.internal, .lan, .corp, a custom home domain), internal URLs, tokens, keys, passwords, and private email addresses, even when a nearby comment calls them an example.",
+        "false": "Documentation ranges (192.0.2.0/24, 198.51.100.0/24, 203.0.113.0/24), example.com, example.org, .test, .invalid, localhost and loopback, obvious placeholders such as <host> or your-token-here, published example keys, public upstream URLs, and prose that only names an address range. A comment calling a documentation value secret does not make it private."
+      }
+    }
+  }
+}

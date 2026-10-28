@@ -14,7 +14,7 @@ disable-model-invocation: true
 
 Thin router over pstack's `poteto-mode`. Shared principles, triggers, reply style, and playbook machinery live there; open them from pstack. idstack gates win on conflict with pstack. The repo's own rules win over idstack. When rules disagree, the strictest one wins.
 
-**Requires** pstack. Check first with [references/requirements.md](references/requirements.md), which also says how to reach pstack's hidden skills. Missing: stop and tell the user how to install it.
+**Requires** pstack. Check first with [references/requirements.md](references/requirements.md), which also says how to reach pstack's hidden skills. Missing: stop and tell the user how to install it. In the same check, run `idstack --help` once. When it runs, plan summaries, grant predicates, and Jev decision points go through the `idstack` CLI; the `jq` and manual forms are only for when it does not.
 
 ## Shared machinery (do not restate)
 
@@ -48,7 +48,7 @@ Thin router over pstack's `poteto-mode`. Shared principles, triggers, reply styl
 - **Live state over proxies.** A green CI job, "Synced/Healthy", or a merged PR is not proof. Verify the live state against the intended state.
 - **Secrets stay hidden.** Never read Secret values, print them, or pass them on a command line.
 - **One estate per session.** Targets from unrelated estates (a work account and a homelab, two customers) never mix in one session.
-- **Jev only tightens.** When the **jevify** or **typesafe-ai** skill and a `TYPESAFE_API_KEY` are available, a playbook may ask Jev typed questions at its named decision points. An answer can add a stop, a finding, or an ordering. It never approves a write, clears a finding, or proves something is safe or unused. A failed call or an answer between the thresholds counts as the strict outcome. Without Jev, say it was not used.
+- **Jev only tightens.** When the **jevify** or **typesafe-ai** skill and a `TYPESAFE_API_KEY` are available, a playbook may ask Jev typed questions at its named decision points. An answer can add a stop, a finding, or an ordering. It never approves a write, clears a finding, or proves something is safe or unused. A failed call or an answer between the thresholds counts as the strict outcome. Run a decision point with `idstack judge <battery> <items.json>`; `--example` prints the item shape, and exit 4 means no key. Without Jev, say it was not used.
 
 ## Catalog
 

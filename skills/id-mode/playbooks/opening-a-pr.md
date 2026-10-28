@@ -10,5 +10,5 @@ Then apply these gates. They win on conflict.
 4. Keep squash messages short, and put the why in the body.
 5. For a change playbook, the body carries the plan or render summary and says whether merging deploys.
 6. Before pushing to a public repo, check the diff, commit messages, and PR text for private hostnames, internal domains, private IPs, internal URLs, machine-specific paths, and secrets. Run a secret scanner (`gitleaks git --redact`) when one is installed. Every candidate blocks the push until the operator or an allowlist clears it.
-   Jev decision point (optional): per candidate, ask "a private hostname or IP rather than a public example?" to order the list, likely private first. It never clears a candidate.
+   Jev decision point (optional): `idstack judge public-hygiene <candidates.json>` ranks the candidates, likely private first. It never clears a candidate.
 7. Opening a PR is a reversible write unless the repo builds preview environments or applies on PR. Then it is a gate.

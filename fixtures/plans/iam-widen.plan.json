@@ -1,0 +1,48 @@
+{
+  "format_version": "1.2",
+  "terraform_version": "1.9.8",
+  "resource_changes": [
+    {
+      "address": "aws_iam_role_policy.app",
+      "mode": "managed",
+      "type": "aws_iam_role_policy",
+      "name": "app",
+      "provider_name": "registry.terraform.io/hashicorp/aws",
+      "change": {
+        "actions": [
+          "update"
+        ],
+        "before": {
+          "policy": "{\"Statement\":[{\"Effect\":\"Allow\",\"Action\":\"s3:GetObject\",\"Resource\":\"arn:aws:s3:::shop-assets/*\"}]}"
+        },
+        "after": {
+          "policy": "{\"Statement\":[{\"Effect\":\"Allow\",\"Action\":\"s3:*\",\"Resource\":\"*\"}]}"
+        },
+        "after_unknown": {}
+      }
+    },
+    {
+      "address": "aws_security_group_rule.web_ingress",
+      "mode": "managed",
+      "type": "aws_security_group_rule",
+      "name": "web_ingress",
+      "provider_name": "registry.terraform.io/hashicorp/aws",
+      "change": {
+        "actions": [
+          "create"
+        ],
+        "before": null,
+        "after": {
+          "type": "ingress",
+          "from_port": 22,
+          "to_port": 22,
+          "cidr_blocks": [
+            "0.0.0.0/0"
+          ]
+        },
+        "after_unknown": {}
+      }
+    }
+  ],
+  "errored": false
+}

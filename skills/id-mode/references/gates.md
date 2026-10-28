@@ -37,7 +37,7 @@ The operator can authorize work ahead of time in two forms. Record each as a tod
 
 Example predicates:
 
-- **Terraform, OpenTofu** (`plan.json` from `show -json`): no delete or replace, and every changed address in the named set.
+- **Terraform, OpenTofu** (`plan.json` from `show -json`): no delete or replace, and every changed address in the named set. `idstack plan-summary plan.json --scope '<glob>' --predicate` checks both and exits 0 only on a pass. It also fails on any IAM or network change unless the grant names that kind of change and you pass `--allow-iam` or `--allow-network`. Without the CLI:
 
   ```sh
   jq '[.resource_changes[] | select(.change.actions - ["no-op","read","create","update"] != [])] | length' plan.json   # must print 0

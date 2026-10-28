@@ -1,0 +1,55 @@
+{
+  "format_version": "1.2",
+  "terraform_version": "1.9.8",
+  "resource_changes": [
+    {
+      "address": "aws_instance.web",
+      "mode": "managed",
+      "type": "aws_instance",
+      "name": "web",
+      "provider_name": "registry.terraform.io/hashicorp/aws",
+      "change": {
+        "actions": [
+          "update"
+        ],
+        "before": {
+          "instance_type": "t3.small"
+        },
+        "after": {
+          "instance_type": "t3.medium"
+        },
+        "after_unknown": {}
+      }
+    },
+    {
+      "address": "aws_db_instance.orders",
+      "mode": "managed",
+      "type": "aws_db_instance",
+      "name": "orders",
+      "provider_name": "registry.terraform.io/hashicorp/aws",
+      "change": {
+        "actions": [
+          "delete",
+          "create"
+        ],
+        "before": {
+          "engine": "postgres",
+          "engine_version": "15.6",
+          "identifier": "orders"
+        },
+        "after": {
+          "engine": "postgres",
+          "engine_version": "16.4",
+          "identifier": "orders"
+        },
+        "after_unknown": {},
+        "replace_paths": [
+          [
+            "engine_version"
+          ]
+        ]
+      }
+    }
+  ],
+  "errored": false
+}
