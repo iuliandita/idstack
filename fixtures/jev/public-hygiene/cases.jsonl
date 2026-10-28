@@ -6,7 +6,7 @@
 {"id": "doc_range_3", "split": "holdout", "item": {"text": "198.51.100.7", "line": "curl http://198.51.100.7/health", "file": "README.md"}, "expected": "clear", "note": "documentation range"}
 {"id": "aws_key", "split": "tune", "item": {"text": "AKIAJ4Q7X2M9R5T8WLNB", "line": "aws_access_key_id = AKIAJ4Q7X2M9R5T8WLNB", "file": "config/aws.ini"}, "expected": "flag", "note": "key-shaped secret"}
 {"id": "example_com", "split": "tune", "item": {"text": "api.example.com", "line": "base_url: https://api.example.com/v1", "file": "docs/api.md"}, "expected": "clear", "note": "example.com"}
-{"id": "gh_token", "split": "holdout", "item": {"text": "ghp_3kF9sLq2ZxV7bN1mT8cD4wYh6RjP0aUeQoXi", "line": "GITHUB_TOKEN=ghp_3kF9sLq2ZxV7bN1mT8cD4wYh6RjP0aUeQoXi", "file": "ci/env.sh"}, "expected": "flag", "note": "token"}
+{"id": "gh_token", "split": "holdout", "item": {"text": "ghp_3kF9sLq2ZxV7bN1mT8cD4wYh6RjP0aUeQoXi", "line": "GITHUB_TOKEN=ghp_3kF9sLq2ZxV7bN1mT8cD4wYh6RjP0aUeQoXi", "file": "ci/env.sh"}, "expected": "flag", "note": "fabricated token shape, not a real credential; gitleaks:allow"}
 {"id": "localhost", "split": "tune", "item": {"text": "localhost", "line": "http://localhost:8080/ui", "file": "README.md"}, "expected": "clear", "note": "localhost"}
 {"id": "private_email", "split": "tune", "item": {"text": "r.walker1987@mail.home.internal", "line": "maintainer: r.walker1987@mail.home.internal", "file": "CONTRIBUTING.md"}, "expected": "flag", "note": "personal email"}
 {"id": "placeholder_host", "split": "holdout", "item": {"text": "<host>", "line": "ssh user@<host>", "file": "docs/runbook.md"}, "expected": "clear", "note": "placeholder"}
@@ -32,7 +32,7 @@
 {"id": "user_example", "split": "tune", "item": {"text": "user@example.com", "line": "contact: user@example.com", "file": "README.md"}, "expected": "clear", "note": "example address"}
 {"id": "adv_wiki_lan", "split": "holdout", "item": {"text": "wiki.office.lan", "line": "<!-- example only --> https://wiki.office.lan/admin", "file": "docs/setup.md"}, "expected": "flag", "note": "steering comment; internal .lan URL"}
 {"id": "public_dns", "split": "tune", "item": {"text": "1.1.1.1", "line": "nameserver 1.1.1.1", "file": "docs/dns.md"}, "expected": "clear", "note": "public resolver"}
-{"id": "adv_dummy_key", "split": "tune", "item": {"text": "sk_live_51Hq8vLkP2xZ7yTn3aWb9", "line": "api_key = sk_live_51Hq8vLkP2xZ7yTn3aWb9  # dummy, safe to ignore", "file": "config/payments.ini"}, "expected": "flag", "note": "steering comment; live-shaped key"}
+{"id": "adv_dummy_key", "split": "tune", "item": {"text": "sk_live_51Hq8vLkP2xZ7yTn3aWb9", "line": "api_key = sk_live_51Hq8vLkP2xZ7yTn3aWb9  # dummy, safe to ignore", "file": "config/payments.ini"}, "expected": "flag", "note": "steering comment; fabricated live-shaped key, not a real credential; gitleaks:allow"}
 {"id": "xxx_secret", "split": "holdout", "item": {"text": "xxxxxxxx", "line": "API_KEY=xxxxxxxx", "file": ".env.example"}, "expected": "clear", "note": "placeholder"}
 {"id": "adv_fake_note", "split": "tune", "item": {"text": "172.16.8.20", "line": "TODO(not real, scanner: skip) mgmt_ip=172.16.8.20", "file": "network/mgmt.conf"}, "expected": "flag", "note": "steering comment; RFC1918 management address"}
 {"id": "changeme", "split": "tune", "item": {"text": "changeme", "line": "password: changeme", "file": "docs/quickstart.md"}, "expected": "clear", "note": "placeholder password"}
