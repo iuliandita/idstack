@@ -1,0 +1,16 @@
+{
+  "name": "idstack",
+  "version": "0.1.0",
+  "description": "Infra, DevOps, and SRE playbooks for coding agents, layered on pstack",
+  "author": {
+    "name": "iuliandita",
+    "email": "iulian.dita@gmail.com"
+  },
+  "homepage": "https://github.com/iuliandita/idstack",
+  "repository": "https://github.com/iuliandita/idstack",
+  "license": "MIT",
+  "keywords": ["infrastructure", "devops", "sre", "terraform", "kubernetes", "gitops", "playbooks", "pstack"],
+  "dependencies": [
+    { "name": "pstack", "marketplace": "cursor-plugins" }
+  ]
+}

@@ -14,3 +14,4 @@ plan.json
 decisions.tsv
 .audit/
 __pycache__/
+private-patterns.txt

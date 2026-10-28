@@ -1,0 +1,16 @@
+name: Feature request
+description: Propose a playbook, overlay, or installer change.
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem and affected workflow
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior and safety impact
+      description: Which gates, harnesses, and install modes it touches.
+    validations:
+      required: true
