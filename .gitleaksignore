@@ -1,0 +1,3 @@
+# Fabricated token shapes in Jev hygiene cases, from the commit before they were marked gitleaks:allow.
+d8d6fc62a630699f09272feda1a42600738247dc:fixtures/jev/public-hygiene/cases.jsonl:github-pat:9
+d8d6fc62a630699f09272feda1a42600738247dc:fixtures/jev/public-hygiene/cases.jsonl:stripe-access-token:35
