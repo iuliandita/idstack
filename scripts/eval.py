@@ -4,11 +4,14 @@ in a temporary copy of fixtures/infra, and check the commands it ran and its fin
 
   python3 scripts/eval.py --harness claude [--scenario ID] [--model sonnet] [--keep]
   python3 scripts/eval.py --harness codex  [--scenario ID] [--model gpt-6.1-terra]
+  python3 scripts/eval.py --harness opencode [--scenario ID] [--model opencode-go/deepseek-v4.1-flash]
 
 Claude Code runs with user settings excluded and loads only pstack (--pstack-dir) and this
 checkout through --plugin-dir, with the idstack guard in ask mode. Codex uses its installed
-idstack plugin. Every run gets an empty KUBECONFIG, empty AWS config, and no cloud credential
-variables, so nothing reaches a real cluster or account. Exit 1 when any scenario fails.
+idstack. OpenCode uses its installed skills on a private server with permission prompts
+auto-approved and this checkout's guard in ask mode. Every
+run gets an empty KUBECONFIG, empty AWS config, and no cloud credential variables, so nothing
+reaches a real cluster or account. Exit 1 when any scenario fails.
 """
 
 from __future__ import annotations
@@ -25,6 +28,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 HOME = Path.home()
+GUARD = ROOT / "harness/opencode/guard"
 # Cloud and cluster credentials an agent could pick up from the environment.
 CLOUD_ENV = re.compile(r"(AWS_|AZURE_|ARM_|GOOGLE_|CLOUDSDK_|GCLOUD_|DIGITALOCEAN_|HCLOUD_|OS_|VAULT_|TF_VAR_|KUBE)")
 
@@ -113,6 +117,46 @@ def run_codex(task: str, work: Path, env: dict, a) -> tuple[list[str], str, str]
     return list(dict.fromkeys(cmds)), reply, r.stdout + r.stderr
 
 
+def run_opencode(task: str, work: Path, env: dict, a) -> tuple[list[str], str, str]:
+    # --standalone: a private server that gets this env (the background service has its own), so
+    # the guard from this checkout loads in ask mode and blocks state-changing infra commands.
+    # --auto: approve permission prompts that would otherwise hang a headless run.
+    cmd = [
+        "opencode",
+        "run",
+        "--standalone",
+        "--auto",
+        "--format",
+        "json",
+        "-m",
+        a.model or "opencode-go/deepseek-v4.1-flash",
+        f"@id-mode {task}",
+    ]
+    # OpenCode takes its working directory from PWD, not the process cwd.
+    r = subprocess.run(
+        cmd,
+        cwd=work,
+        env=dict(env, PWD=str(work), OPENCODE_CONFIG_CONTENT=json.dumps({"plugins": [{"package": str(GUARD)}]})),
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        text=True,
+        timeout=a.timeout,
+    )
+    cmds, reply = [], ""
+    for line in r.stdout.splitlines():
+        try:
+            part = json.loads(line).get("part") or {}
+        except (ValueError, AttributeError):
+            continue
+        if part.get("type") == "tool" and part.get("tool") in ("shell", "bash"):
+            command = (part.get("state") or {}).get("input", {}).get("command")
+            if command:
+                cmds.append(command)
+        elif part.get("type") == "text" and part.get("text"):
+            reply = part["text"]
+    return list(dict.fromkeys(cmds)), reply, r.stdout + r.stderr
+
+
 def judge(sc: dict, cmds: list[str], reply: str, work: Path) -> list[str]:
     fails = []
     if sc.get("forbid_cmd"):
@@ -134,7 +178,7 @@ def judge(sc: dict, cmds: list[str], reply: str, work: Path) -> list[str]:
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--harness", choices=("claude", "codex"), required=True)
+    ap.add_argument("--harness", choices=("claude", "codex", "opencode"), required=True)
     ap.add_argument("--scenario", action="append", help="scenario id (repeatable); default all")
     ap.add_argument("--model")
     ap.add_argument("--pstack-dir", help="pstack plugin dir for Claude Code (default: newest in the plugin cache)")
@@ -155,7 +199,7 @@ def main() -> int:
     for sc in scenarios:
         work = Path(tempfile.mkdtemp(prefix=f"idstack-eval-{sc['id']}-"))
         env = prepare(work)
-        runner = run_claude if a.harness == "claude" else run_codex
+        runner = {"claude": run_claude, "codex": run_codex, "opencode": run_opencode}[a.harness]
         try:
             cmds, reply, raw = runner(sc["task"], work, env, a)
         except subprocess.TimeoutExpired:

@@ -491,8 +491,30 @@ def cmd_doctor(a) -> int:
         have = [n for n in ("id-agent", "plan-reader", "change-verifier") if (agents_dir / f"{n}.toml").is_file()]
         add("codex idstack agents", "ok" if len(have) == 3 else "warn", f"{len(have)}/3 in {agents_dir}")
     if "opencode" in harnesses:
-        oc = Path(os.environ.get("OPENCODE_SKILLS_DIR", HOME / ".config/opencode/skills"))
+        oc = Path(os.environ.get("OPENCODE_SKILLS_DIR", opencode_dir() / "skills"))
         add("opencode id-mode skill", "ok" if (oc / "id-mode/SKILL.md").exists() else "fail", str(oc))
+        cfg = opencode_dir() / "opencode.json"
+        try:
+            doc = json.loads(cfg.read_text()) if cfg.is_file() else {}
+        except ValueError:
+            doc = None
+        if doc is None:
+            add("opencode skill permissions", "warn", f"{cfg} is not plain JSON; not checked")
+        else:
+            manifest = agents_skills / ".pstack-install.json"
+            pstack = json.loads(manifest.read_text()).get("skills", []) if manifest.is_file() else ["poteto-mode"]
+            ours = sorted(p.parent.name for p in (ROOT / "skills").glob("*/SKILL.md"))
+            blocked = [n for n in ours + pstack if opencode_skill_effect(doc, n) != "allow"]
+            add(
+                "opencode skill permissions",
+                "fail" if {"id-mode", "poteto-mode"} & set(blocked) else "warn" if blocked else "ok",
+                "idstack and pstack skills allowed"
+                if not blocked
+                else f"not allowed in {cfg} (add allow rules): " + ", ".join(blocked),
+            )
+        agents_dir = Path(os.environ.get("OPENCODE_AGENTS_DIR", opencode_dir() / "agents"))
+        have = [n for n in ("id-agent", "plan-reader", "change-verifier") if (agents_dir / f"{n}.md").is_file()]
+        add("opencode idstack agents", "ok" if len(have) == 3 else "warn", f"{len(have)}/3 in {agents_dir}")
     found = {p.name for d in skill_dirs() for p in d.iterdir() if (p / "SKILL.md").exists()}
     missing = [s for s in DOMAIN_SKILLS if s not in found]
     add(
@@ -516,11 +538,17 @@ def cmd_doctor(a) -> int:
         rc, out = run_quiet([sys.executable, "-I", str(models), "--check"], 120)
         add("pstack model files", "ok" if rc == 0 else "warn", " ".join(out.split())[:200])
     g = guard_config()
-    add(
-        "guard",
-        "ok",
-        f"mode {g['mode']}" + ("" if g["mode"] != "off" else " (opt-in; enable with `idstack guard enable`)"),
-    )
+    if g["mode"] == "off":
+        add("guard", "ok", "mode off (opt-in; enable with `idstack guard enable`)")
+    else:
+        # Claude Code runs the plugin's own hook; Codex and OpenCode need `guard install`.
+        unguarded = [h for h in ("codex", "opencode") if h in harnesses and not guard_installed(h)]
+        add(
+            "guard",
+            "warn" if unguarded else "ok",
+            f"mode {g['mode']}"
+            + "".join(f"; not installed for {h}: run `idstack guard install --harness {h}`" for h in unguarded),
+        )
     if a.live:
         if shutil.which("kubectl"):
             rc, ctx = run_quiet(["kubectl", "config", "current-context"])
@@ -994,44 +1022,101 @@ def guard_hook_inner(a) -> int:
     return EXIT_OK
 
 
+OPENCODE_GUARD = ROOT / "harness/opencode/guard"
+
+
+def opencode_dir() -> Path:
+    return Path(os.environ.get("XDG_CONFIG_HOME", HOME / ".config")) / "opencode"
+
+
+def opencode_skill_effect(doc: dict, skill: str) -> str:
+    """Effect of OpenCode's global skill permissions on one skill: allow, ask, or deny (last match wins)."""
+    effect = "allow"
+    v1 = (doc.get("permission") or {}).get("skill")
+    if isinstance(v1, str):
+        effect = v1
+    elif isinstance(v1, dict):
+        for pattern, value in v1.items():
+            if fnmatch.fnmatchcase(skill, pattern):
+                effect = value
+    for rule in doc.get("permissions") or []:
+        if (
+            isinstance(rule, dict)
+            and rule.get("action") == "skill"
+            and fnmatch.fnmatchcase(skill, rule.get("resource", "*"))
+        ):
+            effect = rule.get("effect", effect)
+    return effect
+
+
+def guard_config_file(harness: str) -> Path:
+    if harness == "codex":
+        return Path(os.environ.get("CODEX_HOME", HOME / ".codex")) / "hooks.json"
+    return opencode_dir() / "opencode.json"
+
+
+def guard_installed(harness: str) -> bool:
+    paths = [guard_config_file(harness)] + ([opencode_dir() / "opencode.jsonc"] if harness == "opencode" else [])
+    mark = "idstack guard hook" if harness == "codex" else "harness/opencode/guard"
+    return any(p.is_file() and mark in p.read_text() for p in paths)
+
+
 def guard_install(a) -> int:
     link = HOME / ".local/bin/idstack"
     exe = str(link if link.exists() else ROOT / "bin/idstack")
     if a.harness == "codex":
-        path = Path(os.environ.get("CODEX_HOME", HOME / ".codex")) / "hooks.json"
+        path = guard_config_file("codex")
         doc = json.loads(path.read_text()) if path.is_file() else {}
         pre = doc.setdefault("hooks", {}).setdefault("PreToolUse", [])
         ours = [g for g in pre if any("idstack guard hook" in h.get("command", "") for h in g.get("hooks", []))]
-        if a.uninstall:
-            for g in ours:
-                pre.remove(g)
-        elif not ours:
+        changed = bool(ours) if a.uninstall else not ours
+        for g in ours if a.uninstall else []:
+            pre.remove(g)
+        if not a.uninstall and not ours:
             pre.append(
                 {
                     "matcher": "Bash",
                     "hooks": [{"type": "command", "command": f"{shlex.quote(exe)} guard hook --harness codex"}],
                 }
             )
-        if a.dry_run:
-            print(json.dumps(doc, indent=2))
-            return EXIT_OK
-        if path.is_file():
-            shutil.copy2(path, path.with_suffix(f".json.idstack-{time.strftime('%Y%m%dT%H%M%S')}.bak"))
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(doc, indent=2) + "\n")
-        print(
-            f"{'removed from' if a.uninstall else 'wrote'} {path}"
-            + ("" if a.uninstall else "; open Codex and trust the hook with /hooks before it runs")
-        )
+        note = "open Codex and trust the hook with /hooks before it runs"
+    elif a.harness == "opencode":
+        base = opencode_dir()
+        path = guard_config_file("opencode")
+        if not path.is_file() and (base / "opencode.jsonc").is_file():
+            print(
+                f'error: {base / "opencode.jsonc"} has comments; add {{"package": "{OPENCODE_GUARD}"}} '
+                'to its "plugins" list by hand',
+                file=sys.stderr,
+            )
+            return EXIT_FAIL
+        doc = json.loads(path.read_text()) if path.is_file() else {"$schema": "https://opencode.ai/config.json"}
+        plugins = doc.setdefault("plugins", [])
+        ours = [
+            p for p in plugins if isinstance(p, dict) and str(p.get("package", "")).endswith("harness/opencode/guard")
+        ]
+        want = {"package": str(OPENCODE_GUARD)}
+        changed = bool(ours) if a.uninstall else ours != [want]
+        for p in ours:  # also drops an entry left by a checkout that moved
+            plugins.remove(p)
+        if not a.uninstall:
+            plugins.append(want)
+        note = "restart OpenCode to load it"
+    else:
+        print("error: Claude Code loads the guard from the plugin's own hooks; nothing to install", file=sys.stderr)
+        return EXIT_USAGE
+    if not changed:
+        print(f"nothing to remove from {path}" if a.uninstall else f"already in {path}")
         return EXIT_OK
-    if a.uninstall:
-        print("nothing to remove: idstack installs no OpenCode guard")
+    if a.dry_run:
+        print(json.dumps(doc, indent=2))
         return EXIT_OK
-    print(
-        "error: no OpenCode guard yet; OpenCode 2.x did not load it in testing. The id-mode gates still apply there.",
-        file=sys.stderr,
-    )
-    return EXIT_FAIL
+    if path.is_file():
+        shutil.copy2(path, path.with_suffix(f".json.idstack-{time.strftime('%Y%m%dT%H%M%S')}.bak"))
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(doc, indent=2) + "\n")
+    print(f"removed from {path}" if a.uninstall else f"wrote {path}; {note}")
+    return EXIT_OK
 
 
 def cmd_guard(a) -> int:

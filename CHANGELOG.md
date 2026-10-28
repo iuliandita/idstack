@@ -6,6 +6,31 @@ v0.x is the prerelease phase, where breaking changes are expected.
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-10-28
+
+OpenCode as a full harness, and your own model choices.
+
+### Added
+
+- OpenCode guard: `idstack guard install --harness opencode` adds a plugin to `opencode.json` that
+  blocks matching shell calls, the same way the Codex hook does.
+- Model overrides in `~/.config/idstack/models.json`, merged over the shipped defaults and checked
+  the same way; `scripts/pstack_models.py --show` prints the result.
+- `scripts/eval.py --harness opencode` runs the gate scenarios through `opencode run`, with this
+  checkout's guard loaded in ask mode.
+- `idstack doctor` checks OpenCode's subagents, OpenCode skill permissions that would block
+  idstack or pstack, and whether the guard is installed on each harness when it is enabled.
+- README shows the OpenCode form (`@id-mode`) and a per-harness parity table.
+
+### Changed
+
+- Every role in the shared Codex and OpenCode model file names its provider. A role whose provider
+  is the current harness runs natively; from OpenCode, Codex models go through `codex exec` and
+  Claude models through `claude -p`. An `else` model the harness cannot run falls back to the
+  session's model.
+- The read-only OpenCode route uses `opencode run --agent plan`.
+- `guard install` and `guard uninstall` leave a config alone when there is nothing to change.
+
 ## [0.3.2] - 2026-10-28
 
 ### Fixed
@@ -105,7 +130,8 @@ playbooks yet.
   Code and Codex CLIs, security scanning, release workflow, issue and PR templates, and Dependabot
   for workflow actions and the pinned CLIs.
 
-[Unreleased]: https://github.com/iuliandita/idstack/compare/v0.3.2...HEAD
+[Unreleased]: https://github.com/iuliandita/idstack/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/iuliandita/idstack/compare/v0.3.2...v0.4.0
 [0.3.2]: https://github.com/iuliandita/idstack/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/iuliandita/idstack/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/iuliandita/idstack/compare/v0.2.0...v0.3.0

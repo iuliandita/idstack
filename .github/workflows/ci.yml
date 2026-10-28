@@ -84,6 +84,9 @@ jobs:
       - name: Validate plugin manifests
         run: claude plugin validate .
 
+      - name: OpenCode guard plugin parses
+        run: node --check harness/opencode/guard/server.js
+
       - name: Isolate harness state
         run: |
           root="$RUNNER_TEMP/idstack-home"

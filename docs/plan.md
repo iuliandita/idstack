@@ -1,6 +1,6 @@
 # idstack plan
 
-Status: design record, written 2026-10-27. For what has shipped (0.3.1 at time of writing), see the status line in [section 15](#15-roadmap) and [CHANGELOG.md](../CHANGELOG.md).
+Status: design record, written 2026-10-27. For what has shipped (0.4.0 at time of writing), see the status line in [section 15](#15-roadmap) and [CHANGELOG.md](../CHANGELOG.md).
 
 This document is the design and roadmap. The per-playbook specs live in [playbooks.md](playbooks.md).
 
@@ -215,7 +215,7 @@ Three subagents. Each is generated per harness from one neutral source file.
 | `plan-reader` | Turns a plan file, rendered diff, or check-mode output into a summary: counts by action, every destroy or replace, every change to stateful or security-relevant resources, anything outside the stated scope. Read-only. | read, bash for read-only commands | cheap or balanced |
 | `change-verifier` | Independently verifies a change landed, from the live state, against the stated verification queries. Never the agent that made the change. Read-only. | read, bash for read-only commands | balanced, different family from the author when available |
 
-**Model roles.** idstack uses pstack's model rule file (`~/.claude/rules/pstack-models.md` on Claude Code, `~/.agents/pstack-models.md` on Codex and OpenCode), which `install.sh` writes from `config/pstack-models.json`. Playbooks name pstack roles (for example `why investigators`, `hardest tasks`). Not shipped: a separate `idstack-models.md` with three roles of its own, `evidence` (bulk read-only collection), `plan reading`, and `verification`, falling back to tiers:
+**Model roles.** idstack uses pstack's model rule file (`~/.claude/rules/pstack-models.md` on Claude Code, `~/.agents/pstack-models.md` on Codex and OpenCode), which `install.sh` writes from `config/pstack-models.json` merged with the user's `~/.config/idstack/models.json`. Playbooks name pstack roles (for example `why investigators`, `hardest tasks`). Not shipped: a separate `idstack-models.md` with three roles of its own, `evidence` (bulk read-only collection), `plan reading`, and `verification`, falling back to tiers:
 
 - `evidence`: the cheapest capable tier.
 - `plan reading`: balanced tier. Escalate to the strongest tier when the plan contains destroys, replaces, IAM, or network policy changes.
@@ -250,7 +250,7 @@ Prose rules are not enough. idstack ships an optional guard hook.
 
 - Claude Code: `hooks/hooks.json` in the plugin, PreToolUse on Bash.
 - Codex: `idstack guard install --harness codex` adds a `PreToolUse` entry on Bash to `$CODEX_HOME/hooks.json`, which needs the user's trust review (`/hooks`) before it runs. Codex cannot ask, so `ask` mode blocks, and `idstack guard allow-once` approves one exact command.
-- OpenCode: none yet. The design is a small TypeScript plugin using `tool.execute.before` (issue #13).
+- OpenCode: a plugin package in `harness/opencode/guard` that hooks `execute.before` on shell calls and forwards each one to `idstack guard hook --harness opencode`; `idstack guard install --harness opencode` adds it to the `plugins` list in `opencode.json`.
 
 ## 9. Jev decision layer
 
@@ -311,7 +311,7 @@ Many idstack steps need a small common-sense judgment over text: does this relea
 **OpenCode.**
 
 - Reads skills from `~/.agents/skills/` and `~/.claude/skills/` among others. No plugin marketplace for skills.
-- `install.sh` links `skills/*` into `~/.config/opencode/skills/` and the generated agents into `~/.config/opencode/agents/`. There is no OpenCode guard plugin yet (issue #13).
+- `install.sh` links `skills/*` into `~/.config/opencode/skills/` and the generated agents into `~/.config/opencode/agents/`. `idstack guard install --harness opencode` registers the guard plugin.
 - OpenCode reads only `name`, `description`, `license`, `compatibility`, and `metadata` from SKILL.md and ignores the rest.
 
 **Generation.** Root files are the Claude Code plugin. `idstack build` generates the Codex and OpenCode artifacts (agent TOML and Markdown, `openai.yaml` per skill) from `agents/*.md` and the skills. CI fails when generated files are stale, the same rule pstack uses.
@@ -405,7 +405,7 @@ Eval runs cost tokens, so they do not run per PR. pstack's `eval` playbook is th
 
 Each phase ends with a verifiable exit check.
 
-Status at v0.3.1: the artifacts of phases 1 through 5 ship (router, playbooks, principles, subagents, CLI, batteries with calibration in [jev-calibration.md](jev-calibration.md), guard for Claude Code and Codex, build generators, setup skill, Codex and OpenCode files). Not shipped from phase 5: the OpenCode guard (issue #13), model detection in `/idstack:setup`, the `idstack-models.md` roles, and data boundaries. The dogfooding exits (real tasks, a real incident or game-day, an assurance pass on a small cluster), the nightly evals, and the pstack-tracking job are still open.
+Status at v0.4.0: the artifacts of phases 1 through 5 ship (router, playbooks, principles, subagents, CLI, batteries with calibration in [jev-calibration.md](jev-calibration.md), guard for Claude Code, Codex, and OpenCode, build generators, setup skill, Codex and OpenCode files). Not shipped from phase 5: model detection in `/idstack:setup`, the `idstack-models.md` roles, and data boundaries. The dogfooding exits (real tasks, a real incident or game-day, an assurance pass on a small cluster), the nightly evals, and the pstack-tracking job are still open.
 
 **Phase 0: bootstrap.**
 Repo, license, this plan, CI skeleton (actionlint, zizmor, gitleaks, ASCII check), issue templates.

@@ -316,6 +316,80 @@ class JevRuleTest(unittest.TestCase):
                 self.assertEqual(len({c["id"] for c in cases}), len(cases))
 
 
+class GuardInstallTest(unittest.TestCase):
+    def run_guard(self, cfg, *args):
+        env = dict(os.environ, XDG_CONFIG_HOME=cfg)
+        return subprocess.run(
+            [sys.executable, str(BIN), "guard", *args, "--harness", "opencode"],
+            env=env,
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout
+
+    def test_opencode_install_keeps_other_plugins(self):
+        with tempfile.TemporaryDirectory() as cfg:
+            path = Path(cfg) / "opencode/opencode.json"
+            self.run_guard(cfg, "uninstall")
+            self.assertFalse(path.exists(), "uninstall must not create a config")
+            path.parent.mkdir()
+            path.write_text(json.dumps({"plugins": [{"package": "/x/other"}]}))
+            self.run_guard(cfg, "install")
+            self.assertIn("already", self.run_guard(cfg, "install"))
+            plugins = json.loads(path.read_text())["plugins"]
+            self.assertEqual(plugins, [{"package": "/x/other"}, {"package": str(ROOT / "harness/opencode/guard")}])
+            self.run_guard(cfg, "uninstall")
+            self.assertEqual(json.loads(path.read_text())["plugins"], [{"package": "/x/other"}])
+
+
+class OpencodePermissionTest(unittest.TestCase):
+    def test_skill_effect(self):
+        v1 = {"permission": {"skill": {"*": "deny", "id-*": "allow", "id-secret": "ask"}}}
+        v2 = {
+            "permissions": [
+                {"action": "skill", "resource": "*", "effect": "deny"},
+                {"action": "skill", "resource": "id-mode", "effect": "allow"},
+            ]
+        }
+        cases = [
+            ({}, "id-mode", "allow"),
+            (v1, "id-mode", "allow"),
+            (v1, "id-secret", "ask"),
+            (v1, "poteto-mode", "deny"),
+            (v2, "id-mode", "allow"),
+            (v2, "setup", "deny"),
+            ({"permission": {"skill": "deny"}}, "id-mode", "deny"),
+        ]
+        for doc, skill, want in cases:
+            with self.subTest(skill=skill, doc=doc):
+                self.assertEqual(idstack.opencode_skill_effect(doc, skill), want)
+
+
+class ModelOverrideTest(unittest.TestCase):
+    def test_override_merges_over_defaults(self):
+        script = ROOT / "scripts/pstack_models.py"
+        with tempfile.TemporaryDirectory() as cfg:
+            (Path(cfg) / "models.json").write_text(json.dumps({"claude": {"roles": {"hardest tasks": "sonnet high"}}}))
+            r = subprocess.run(
+                [sys.executable, str(script), "--show", "--target", "claude"],
+                env=dict(os.environ, IDSTACK_CONFIG_DIR=cfg),
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            roles = json.loads(r.stdout)["claude"]["roles"]
+            self.assertEqual(roles["hardest tasks"], "sonnet high")
+            self.assertEqual(len(roles), 17, "unchanged roles keep their defaults")
+            (Path(cfg) / "models.json").write_text(json.dumps({"claud": {}}))
+            r = subprocess.run(
+                [sys.executable, str(script), "--show"],
+                env=dict(os.environ, IDSTACK_CONFIG_DIR=cfg),
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(r.returncode, 3, "a misspelled key must fail, not be ignored")
+
+
 class BuildTest(unittest.TestCase):
     def test_generated_files_current(self):
         r = subprocess.run([sys.executable, str(BIN), "build", "--check"], capture_output=True, text=True)
