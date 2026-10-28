@@ -22,7 +22,9 @@ cd idstack
 
 The installer finds Claude Code, Codex, and OpenCode on your PATH, installs pstack wherever it is
 missing, then installs idstack. It also writes pstack's per-role model choices from
-[config/pstack-models.json](config/pstack-models.json) instead of pstack's `xhigh` defaults.
+[config/pstack-models.json](config/pstack-models.json) instead of pstack's `xhigh` defaults. Those
+choices are one opinionated default; set your own in `~/.config/idstack/models.json`
+([INSTALL](INSTALL.md#your-own-models)).
 `--harness claude,codex` limits it, `--dry-run` prints the commands without running them.
 
 Claude Code only, without the clone:
@@ -44,13 +46,27 @@ Start a new session after installing, then hand the router the task:
 ```text
 /idstack:id-mode bump the ingress-nginx chart and stop before sync     # Claude Code
 $idstack:id-mode rotate the leaked CI deploy token                      # Codex
+@id-mode find why the nightly backup job failed                         # OpenCode
 ```
 
-Codex namespaces plugin skills, so the bare `$id-mode` loads nothing. Run `/idstack:setup` (Claude
-Code) or `$idstack:setup` (Codex) once to check what is installed and to choose a guard mode. Both
-skills are explicit-only: when you hand a task to another agent (a T3 delegate, `claude -p`, or
-`codex exec`), start the task text with the slash or dollar form above. On OpenCode, ask for the
-`id-mode` skill.
+Run setup the same way once (`/idstack:setup`, `$idstack:setup`, `@setup`) to check what is
+installed and to choose a guard mode. Codex namespaces plugin skills, so the bare `$id-mode` loads
+nothing. Both skills are explicit-only on every harness: when you hand a task to another agent (a
+T3 delegate, `claude -p`, `codex exec`, or `opencode run`), start the task text with that harness's
+form above. Under T3 Code, use the form of the provider the thread runs on.
+
+Every harness gets the same thing:
+
+| | Claude Code | Codex | OpenCode |
+| --- | --- | --- | --- |
+| Skills and playbooks | plugin | plugin | linked into `~/.config/opencode/skills` |
+| Subagents (`id-agent`, `plan-reader`, `change-verifier`) | plugin | `~/.codex/agents` | `~/.config/opencode/agents` |
+| Guard, when enabled | asks | blocks; `allow-once` to approve | blocks; `allow-once` to approve |
+| Model per role | `~/.claude/rules/pstack-models.md` | `~/.agents/pstack-models.md` | `~/.agents/pstack-models.md` |
+| Your model overrides | `~/.config/idstack/models.json` | same file | same file |
+| Gate evals (`scripts/eval.py`) | yes | yes | yes |
+
+T3 Code runs these three as providers, so a T3 thread gets whatever its provider has.
 
 `id-mode` reads pstack's `poteto-mode`, picks a playbook, copies its steps into a todo list, and
 stops at a gate before anything changes live state. Infra tasks go to idstack's playbooks;
@@ -74,8 +90,8 @@ everything else goes to pstack's, unchanged.
   and network changes, and a predicate check for grants), `judge` (one Jev decision point),
   `doctor` (what is installed or missing), `check` (repository checks), `build` (generate the
   Codex and OpenCode files), and `guard`.
-- An opt-in guard that asks (Claude Code) or blocks (Codex) before state-mutating infra commands.
-  OpenCode has none yet. Off by default. It is a seatbelt, not a lock: the gates apply with it off.
+- An opt-in guard that asks (Claude Code) or blocks (Codex, OpenCode) before state-mutating infra
+  commands. Off by default. It is a seatbelt, not a lock: the gates apply with it off.
 
 Domain knowledge (how Terraform, Kubernetes, or Prometheus work) stays in separate domain skills.
 idstack holds the process. The design is in [docs/plan.md](docs/plan.md).
@@ -212,7 +228,7 @@ idstack adds none of these and calls some of them from its playbooks.
 | Item | Status | What it does |
 | --- | --- | --- |
 | `install.sh` | shipped | Installs pstack where missing, then idstack, on Claude Code, Codex, and OpenCode |
-| pstack model files | shipped | Per-role models from `config/pstack-models.json`, routed across providers through T3 Code or each provider's CLI, with a native fallback |
+| pstack model files | shipped | Per-role models from `config/pstack-models.json` plus your overrides, routed across providers through T3 Code or each provider's CLI, with a native fallback |
 | `scripts/check.py` | shipped | ASCII, manifests, links, router catalog against playbook files, names |
 | `idstack plan-summary` | shipped | Deterministic Terraform/OpenTofu plan summary and grant predicate (`--predicate`, exit 1 on fail) |
 | `idstack judge` | shipped | Runs one Jev battery from `src/questions/`; `--eval` checks it against labeled cases ([calibration](docs/jev-calibration.md)) |

@@ -77,7 +77,8 @@ leaves it alone and reports it as installed outside the script.
 folder under `skills/` into `~/.config/opencode/skills`. It writes the list of links to
 `~/.config/opencode/skills/.idstack-install.json`. It never replaces a folder that is not one of its
 links. It links the subagents in `harness/opencode/agents` into `~/.config/opencode/agents` the
-same way.
+same way. If your `opencode.json` denies skills by default (`"permission": {"skill": {"*": "deny"}}`),
+add allow rules for idstack's skills and pstack's; `idstack doctor` lists the ones still blocked.
 
 **Every harness: the CLI.** The script links `~/.local/bin/idstack` to `bin/idstack` in the clone
 (the `--source` checkout, or `~/.local/share/idstack/src`). Claude Code also puts the plugin's own
@@ -88,10 +89,15 @@ same way.
 ```sh
 idstack guard enable --mode ask            # or --mode log; Claude Code picks this up through the plugin hook
 idstack guard install --harness codex      # then trust the hook with /hooks in Codex
+idstack guard install --harness opencode   # adds the plugin to ~/.config/opencode/opencode.json; restart OpenCode
 idstack guard test kubectl delete pod x    # prints the match, runs nothing
 ```
 
-Codex cannot ask, so in `ask` mode it blocks a matching command. After you approve
+Both install commands back up the file they edit, and `guard uninstall --harness <codex|opencode>`
+removes only idstack's entry. A config written as `opencode.jsonc` is left alone: add
+`{"package": "<clone>/harness/opencode/guard"}` to its `plugins` list by hand.
+
+Codex and OpenCode cannot ask, so in `ask` mode they block a matching command. After you approve
 it, run `idstack guard allow-once '<command>'` in your own terminal, quoting the exact text the agent
 used (any difference, even in spaces, needs a new approval), and let the agent rerun it.
 
@@ -110,9 +116,15 @@ The script writes the file for each selected harness from
 Roles route across providers. A value such as `gpt-6.1-terra medium via codex else sonnet medium`
 runs on Codex by the first route available: T3 Code's `delegate_task` when the session runs under
 T3, otherwise the provider's own CLI headless (`codex exec`, `claude -p`, or `opencode run`, read-only
-unless the role edits files), otherwise Sonnet with the harness's own subagent tool. Values
-without `via` always run natively. The exact commands live in the `t3` section of the JSON and are
-copied into each file.
+unless the role edits files), otherwise Sonnet with the harness's own subagent tool. When the
+named provider is the harness you are in, the role runs natively on that model. Values without
+`via` always run natively. The exact commands live in the `t3` section of the JSON and are copied
+into each file.
+
+Codex and OpenCode share `~/.agents/pstack-models.md`, so every line there names its provider. From
+Codex, `gpt-6.1-sol high via codex` runs natively; from OpenCode, the same line goes to `codex exec`.
+DeepSeek Flash lines run natively in OpenCode and through `opencode run` elsewhere. When the `else`
+model is one the current harness cannot run, the role runs on the session's own model and says so.
 
 A Codex session calling `claude -p` or `opencode run` needs network access in its sandbox; the
 default `workspace-write` sandbox blocks it, so those roles fall through to the native model there
@@ -127,6 +139,28 @@ unless you allow network access.
 | Hardest tasks, synthesizers | Opus | Sol |
 | Review panels (arena, architect, interrogate) | Opus plus Sol via Codex | Sol plus Opus via Claude |
 
+From OpenCode, the Codex column applies with each route reversed: Codex models through `codex exec`,
+Claude models through `claude -p`, DeepSeek Flash natively, and DeepSeek Flash as the fallback for
+Codex roles when the `codex` CLI is missing.
+
+### Your own models
+
+The shipped choices are one opinionated default. Put yours in `~/.config/idstack/models.json`
+(`$IDSTACK_CONFIG_DIR/models.json`), with the same shape as
+[config/pstack-models.json](config/pstack-models.json) and only the keys you change. Objects merge
+key by key, so one role is enough:
+
+```json
+{
+  "claude": { "roles": { "hardest tasks": "sonnet high" } },
+  "agents": { "roles": { "swarm workers": "opencode-go/deepseek-v4.1-flash high via opencode else gpt-6-luna medium" } }
+}
+```
+
+Then rerun `./install.sh` (or `python3 scripts/pstack_models.py`). The file lives outside the clone,
+so updates keep it, and it goes through the same checks as the defaults; a misspelled top-level key
+fails instead of being ignored. `python3 scripts/pstack_models.py --show` prints the merged result.
+
 Effort starts at `medium` and goes to `high` only for hard roles; fast mode and the priority tier
 are off. Before writing, the script checks every role is present and every value parses. It checks
 Claude Code models against the names its subagents accept, Codex models and efforts against
@@ -137,7 +171,7 @@ the lists in the JSON. A CLI that is missing or signed out is skipped with a war
 Each file carries a `managed by idstack` line. The script replaces only files with that line. If
 you ran `/setup-pstack` yourself, it leaves your file alone and reports it; `--force` backs it up
 to `.idstack-backups/` next to the file and replaces it. Delete the marker line to keep your own
-edits, or change the JSON and rerun `./install.sh`. To run the step on its own:
+edits, or set overrides as above and rerun `./install.sh`. To run the step on its own:
 
 ```sh
 python3 scripts/pstack_models.py --check

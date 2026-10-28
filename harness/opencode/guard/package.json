@@ -1,0 +1,12 @@
+{
+  "name": "idstack-guard",
+  "description": "idstack guard for OpenCode: blocks state-mutating infra commands through `idstack guard hook`.",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "author": "iuliandita",
+  "repository": "https://github.com/iuliandita/idstack",
+  "exports": {
+    "./server": "./server.js"
+  }
+}

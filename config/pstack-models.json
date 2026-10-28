@@ -9,7 +9,11 @@
     },
     "claudeAgent": {
       "option": "effort",
-      "models": ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"],
+      "models": [
+        "claude-opus-5-5",
+        "claude-sonnet-5-5",
+        "claude-haiku-5-5"
+      ],
       "cli": {
         "read": "claude -p --model {model} --effort {effort} --permission-mode plan --no-session-persistence \"<brief>\"",
         "write": "claude -p --model {model} --effort {effort} --permission-mode acceptEdits --no-session-persistence \"<brief>\""
@@ -17,9 +21,15 @@
     },
     "opencode": {
       "option": "variant",
-      "efforts": { "opencode-go/deepseek-v4.1-flash": ["low", "high", "max"] },
+      "efforts": {
+        "opencode-go/deepseek-v4.1-flash": [
+          "low",
+          "high",
+          "max"
+        ]
+      },
       "cli": {
-        "read": "opencode run -m {model}#{effort} \"<brief>\"",
+        "read": "opencode run --agent plan -m {model}#{effort} \"<brief>\"",
         "write": "opencode run -m {model}#{effort} --auto \"<brief>\""
       }
     }
@@ -49,27 +59,25 @@
   },
   "agents": {
     "budget": "medium (high)",
-    "notes": [
-      "Plain values are Codex slugs. In OpenCode, run them as if they said `via codex` (steps 1 and 2); failing both, use opencode-go/deepseek-v4.1-flash high."
-    ],
+    "notes": [],
     "roles": {
-      "feature, refactoring": "gpt-6.1-terra medium",
-      "bug-fix": "gpt-6.1-sol high",
-      "perf-issue": "gpt-6.1-sol high",
-      "hillclimb": "gpt-6.1-terra medium",
+      "feature, refactoring": "gpt-6.1-terra medium via codex else opencode-go/deepseek-v4.1-flash high",
+      "bug-fix": "gpt-6.1-sol high via codex else opencode-go/deepseek-v4.1-flash high",
+      "perf-issue": "gpt-6.1-sol high via codex else opencode-go/deepseek-v4.1-flash high",
+      "hillclimb": "gpt-6.1-terra medium via codex else opencode-go/deepseek-v4.1-flash high",
       "judgment and prose": "claude-opus-5-5 medium via claudeAgent else gpt-6.1-sol medium",
-      "hardest tasks": "gpt-6.1-sol high",
+      "hardest tasks": "gpt-6.1-sol high via codex else opencode-go/deepseek-v4.1-flash high",
       "how explorer": "opencode-go/deepseek-v4.1-flash high via opencode else gpt-6-luna medium",
-      "how explainer": "gpt-6.1-terra medium",
+      "how explainer": "gpt-6.1-terra medium via codex else opencode-go/deepseek-v4.1-flash high",
       "why investigators": "opencode-go/deepseek-v4.1-flash high via opencode else gpt-6-luna medium",
-      "why synthesizer": "gpt-6.1-sol high",
-      "reflect tooling": "gpt-6-luna medium",
-      "reflect judgment, divergent, synthesizer": "gpt-6.1-sol medium",
-      "arena runners": "gpt-6.1-sol high, claude-opus-5-5 high via claudeAgent else gpt-6.1-terra high",
-      "arena cross-judge pool": "claude-opus-5-5 high via claudeAgent else gpt-6.1-terra high, gpt-6.1-sol high",
-      "swarm workers": "gpt-6.1-terra medium",
-      "architect runners": "gpt-6.1-sol high, claude-opus-5-5 high via claudeAgent else gpt-6.1-terra high",
-      "interrogate reviewers": "gpt-6.1-sol high, claude-opus-5-5 high via claudeAgent else gpt-6.1-terra high"
+      "why synthesizer": "gpt-6.1-sol high via codex else opencode-go/deepseek-v4.1-flash high",
+      "reflect tooling": "gpt-6-luna medium via codex else opencode-go/deepseek-v4.1-flash high",
+      "reflect judgment, divergent, synthesizer": "gpt-6.1-sol medium via codex else opencode-go/deepseek-v4.1-flash high",
+      "arena runners": "gpt-6.1-sol high via codex else opencode-go/deepseek-v4.1-flash high, claude-opus-5-5 high via claudeAgent else gpt-6.1-terra high",
+      "arena cross-judge pool": "claude-opus-5-5 high via claudeAgent else gpt-6.1-terra high, gpt-6.1-sol high via codex else opencode-go/deepseek-v4.1-flash high",
+      "swarm workers": "gpt-6.1-terra medium via codex else opencode-go/deepseek-v4.1-flash high",
+      "architect runners": "gpt-6.1-sol high via codex else opencode-go/deepseek-v4.1-flash high, claude-opus-5-5 high via claudeAgent else gpt-6.1-terra high",
+      "interrogate reviewers": "gpt-6.1-sol high via codex else opencode-go/deepseek-v4.1-flash high, claude-opus-5-5 high via claudeAgent else gpt-6.1-terra high"
     }
   }
 }

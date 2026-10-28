@@ -528,8 +528,9 @@ cli_uninstall() {
   log "idstack CLI"
   local link=$IDSTACK_BIN_DIR/idstack
   [[ -L $link && $(readlink "$link") == */bin/idstack ]] || { log "  no idstack link at $link"; return; }
-  # Remove the Codex guard hook first: it calls this binary.
+  # Remove the guard hooks first: they call this checkout.
   wants codex && run "$link" guard uninstall --harness codex
+  wants opencode && run "$link" guard uninstall --harness opencode
   run rm "$link"
 }
 
