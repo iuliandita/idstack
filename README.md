@@ -23,7 +23,8 @@ cd idstack
 The installer finds Claude Code, Codex, and OpenCode on your PATH, installs pstack wherever it is
 missing, then installs idstack. It also writes pstack's per-role model choices from
 [config/pstack-models.json](config/pstack-models.json) instead of pstack's `xhigh` defaults. Those
-choices are one opinionated default; set your own in `~/.config/idstack/models.json`
+choices are one opinionated default. Each role falls back across Claude, Codex, and OpenCode models,
+so it works with one, two, or all three harnesses; set your own in `~/.config/idstack/models.json`
 ([INSTALL](INSTALL.md#your-own-models)).
 `--harness claude,codex` limits it, `--dry-run` prints the commands without running them.
 

@@ -1,6 +1,6 @@
 # idstack plan
 
-Status: design record, written 2026-10-27. For what has shipped (0.4.0 at time of writing), see the status line in [section 15](#15-roadmap) and [CHANGELOG.md](../CHANGELOG.md).
+Status: design record, written 2026-10-27. For what has shipped (0.5.0 at time of writing), see the status line in [section 15](#15-roadmap) and [CHANGELOG.md](../CHANGELOG.md).
 
 This document is the design and roadmap. The per-playbook specs live in [playbooks.md](playbooks.md).
 
@@ -228,7 +228,9 @@ Not shipped either: tier-only defaults. `config/pstack-models.json` names real m
 1. Native subagent, when the current harness serves the model.
 2. The host's delegation tool, when one is available (for example, an orchestrator's delegate-task call).
 3. The other harness's headless CLI (`codex exec`, `claude -p`, `opencode run`), with the model flag. The exact commands are in `config/pstack-models.json`.
-4. Fall back to the role's tier on the current harness, and say so in the reply.
+4. Fall back to the next option in the role's chain, and to the session model when none is reachable, and say so in the reply.
+
+Each role is one chain with an option per provider (`<model> <effort> via <provider>`, joined by `else`, with `or` groups that prefer the current harness), so it resolves on any combination of installed harnesses. `scripts/pstack_models.py --resolve <harness>` prints what each role runs on a given machine.
 
 A cross-harness worker gets a self-contained brief (scope, target, read-only commands allowed, expected output), because each dispatch costs a context handoff. It needs the same pinned target, read-only credentials, and guard as the parent. Without those, it falls back to step 4.
 
@@ -405,7 +407,7 @@ Eval runs cost tokens, so they do not run per PR. pstack's `eval` playbook is th
 
 Each phase ends with a verifiable exit check.
 
-Status at v0.4.0: the artifacts of phases 1 through 5 ship (router, playbooks, principles, subagents, CLI, batteries with calibration in [jev-calibration.md](jev-calibration.md), guard for Claude Code, Codex, and OpenCode, build generators, setup skill, Codex and OpenCode files). Not shipped from phase 5: model detection in `/idstack:setup`, the `idstack-models.md` roles, and data boundaries. The dogfooding exits (real tasks, a real incident or game-day, an assurance pass on a small cluster), the nightly evals, and the pstack-tracking job are still open.
+Status at v0.5.0: the artifacts of phases 1 through 5 ship (router, playbooks, principles, subagents, CLI, batteries with calibration in [jev-calibration.md](jev-calibration.md), guard for Claude Code, Codex, and OpenCode, build generators, setup skill, Codex and OpenCode files). Not shipped from phase 5: model detection in `/idstack:setup`, the `idstack-models.md` roles, and data boundaries. The dogfooding exits (real tasks, a real incident or game-day, an assurance pass on a small cluster), the nightly evals, and the pstack-tracking job are still open.
 
 **Phase 0: bootstrap.**
 Repo, license, this plan, CI skeleton (actionlint, zizmor, gitleaks, ASCII check), issue templates.

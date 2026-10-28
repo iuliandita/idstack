@@ -1,5 +1,6 @@
 import importlib.machinery
 import importlib.util
+import itertools
 import json
 import os
 import shutil
@@ -402,29 +403,65 @@ class OpencodePermissionTest(unittest.TestCase):
                 self.assertEqual(idstack.opencode_skill_effect(doc, skill), want)
 
 
+_mloader = importlib.machinery.SourceFileLoader("pstack_models", str(ROOT / "scripts/pstack_models.py"))
+_mspec = importlib.util.spec_from_loader("pstack_models", _mloader)
+pstack_models = importlib.util.module_from_spec(_mspec)
+_mloader.exec_module(pstack_models)
+SHIPPED_ROLES = json.loads((ROOT / "config/pstack-models.json").read_text())["roles"]
+
+
+class ModelRoutingTest(unittest.TestCase):
+    PROVIDERS = ("claudeAgent", "codex", "opencode")
+
+    def test_every_install_combination_resolves(self):
+        for n in (1, 2, 3):
+            for have in itertools.combinations(self.PROVIDERS, n):
+                for harness in have:
+                    for role, value in SHIPPED_ROLES.items():
+                        with self.subTest(have=have, harness=harness, role=role):
+                            picks = pstack_models.resolve(value, harness, set(have))
+                            self.assertNotIn("parent", picks)
+                            self.assertTrue(all(p.rsplit(" via ", 1)[1] in have for p in picks))
+                            if n == 1:
+                                self.assertTrue(all(p.endswith(f"via {harness}") for p in picks))
+                            if len(picks) == 2 and n > 1:
+                                self.assertNotEqual(picks[0], picks[1], "a panel needs two different models")
+
+    def test_full_install_keeps_home_models(self):
+        everything = set(self.PROVIDERS)
+        cases = [
+            ("claudeAgent", "hardest tasks", "claude-opus-5-5 high via claudeAgent"),
+            ("codex", "hardest tasks", "gpt-6.1-sol high via codex"),
+            ("opencode", "hardest tasks", "gpt-6.1-sol high via codex"),
+            ("claudeAgent", "bug-fix", "gpt-6.1-sol high via codex"),
+            ("opencode", "judgment and prose", "claude-opus-5-5 medium via claudeAgent"),
+            ("codex", "how explorer", "opencode-go/deepseek-v4.1-flash high via opencode"),
+            ("claudeAgent", "reflect tooling", "claude-haiku-5-5 medium via claudeAgent"),
+        ]
+        for harness, role, want in cases:
+            with self.subTest(harness=harness, role=role):
+                self.assertEqual(pstack_models.resolve(SHIPPED_ROLES[role], harness, everything)[0], want)
+
+
 class ModelOverrideTest(unittest.TestCase):
+    def show(self, cfg, override):
+        (Path(cfg) / "models.json").write_text(json.dumps(override))
+        return subprocess.run(
+            [sys.executable, str(ROOT / "scripts/pstack_models.py"), "--show"],
+            env=dict(os.environ, IDSTACK_CONFIG_DIR=cfg),
+            capture_output=True,
+            text=True,
+        )
+
     def test_override_merges_over_defaults(self):
-        script = ROOT / "scripts/pstack_models.py"
         with tempfile.TemporaryDirectory() as cfg:
-            (Path(cfg) / "models.json").write_text(json.dumps({"claude": {"roles": {"hardest tasks": "sonnet high"}}}))
-            r = subprocess.run(
-                [sys.executable, str(script), "--show", "--target", "claude"],
-                env=dict(os.environ, IDSTACK_CONFIG_DIR=cfg),
-                capture_output=True,
-                text=True,
-                check=True,
-            )
-            roles = json.loads(r.stdout)["claude"]["roles"]
-            self.assertEqual(roles["hardest tasks"], "sonnet high")
+            r = self.show(cfg, {"roles": {"hardest tasks": "claude-sonnet-5-5 high via claudeAgent"}})
+            roles = json.loads(r.stdout)["roles"]
+            self.assertEqual(roles["hardest tasks"], "claude-sonnet-5-5 high via claudeAgent")
             self.assertEqual(len(roles), 17, "unchanged roles keep their defaults")
-            (Path(cfg) / "models.json").write_text(json.dumps({"claud": {}}))
-            r = subprocess.run(
-                [sys.executable, str(script), "--show"],
-                env=dict(os.environ, IDSTACK_CONFIG_DIR=cfg),
-                capture_output=True,
-                text=True,
-            )
-            self.assertEqual(r.returncode, 3, "a misspelled key must fail, not be ignored")
+            for bad in ({"rolse": {}}, {"claude": {"roles": {}}}):
+                with self.subTest(bad=bad):
+                    self.assertEqual(self.show(cfg, bad).returncode, 3, "a wrong or old-shape key must fail")
 
 
 class BuildTest(unittest.TestCase):

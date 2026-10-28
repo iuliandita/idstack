@@ -6,6 +6,24 @@ v0.x is the prerelease phase, where breaking changes are expected.
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-10-28
+
+Model routing for any mix of harnesses.
+
+### Changed
+
+- One role table for every harness. Each role chains an option per provider, so it resolves on
+  Claude Code, Codex, or OpenCode alone, any two of them, or all three; `or` groups keep roles such
+  as "hardest tasks" on the current harness's own model. With all three installed, each harness
+  routes as before.
+- `~/.config/idstack/models.json` takes one top-level `roles` object. A 0.4.0 file with `claude` and
+  `agents` sections is rejected with a note on how to move it.
+
+### Added
+
+- `scripts/pstack_models.py --resolve <harness>` prints what each role runs on this machine.
+- Tests resolve every role for every combination of installed harnesses.
+
 ## [0.4.1] - 2026-10-28
 
 ### Fixed
@@ -137,7 +155,8 @@ playbooks yet.
   Code and Codex CLIs, security scanning, release workflow, issue and PR templates, and Dependabot
   for workflow actions and the pinned CLIs.
 
-[Unreleased]: https://github.com/iuliandita/idstack/compare/v0.4.1...HEAD
+[Unreleased]: https://github.com/iuliandita/idstack/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/iuliandita/idstack/compare/v0.4.1...v0.5.0
 [0.4.1]: https://github.com/iuliandita/idstack/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/iuliandita/idstack/compare/v0.3.2...v0.4.0
 [0.3.2]: https://github.com/iuliandita/idstack/compare/v0.3.1...v0.3.2
