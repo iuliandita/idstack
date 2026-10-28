@@ -6,6 +6,21 @@ v0.x is the prerelease phase, where breaking changes are expected.
 
 ## Unreleased
 
+## [0.2.0] - 2026-10-28
+
+The skills ship: `/idstack:id-mode` now exists and routes infra work.
+
+### Added
+
+- `id-mode` router over pstack's `poteto-mode`, with references for requirements, gates and
+  grants, evidence and reply sections, target pinning, and the domain skill map.
+- 21 playbooks (10 change, 2 diagnose, 7 assure, 2 operate) and 6 overlays on pstack playbooks
+  (`bug-fix`, `babysit`, `shipping`, `opening-a-pr`, `autonomous-run`, `pause-safely`).
+- Principle skills: plan-before-apply, pin-the-target, prove-the-restore, reversible-first.
+- Subagents: `id-agent`, `plan-reader`, `change-verifier`.
+- `scripts/check.py` checks skill and agent names, the router catalog against the playbook files,
+  and reference paths.
+
 ### Fixed
 
 - Codex now gets new idstack versions: the installer reinstalls the plugin when the marketplace
