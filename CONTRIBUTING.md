@@ -51,3 +51,14 @@ mkdir -p "$CODEX_HOME"
 
 Update [INSTALL.md](INSTALL.md) and [CHANGELOG.md](CHANGELOG.md) in the same PR when behavior
 changes.
+
+## Releases
+
+Feature and fix PRs target `develop` and are squash-merged. To release:
+
+1. On `develop`, bump the three manifests and move the `Unreleased` changelog entries under the new
+   version, by PR.
+2. Open a PR from `develop` to `main` and merge it with a merge commit, never a squash, so `main`
+   stays an ancestor of `develop`.
+3. Tag the merge on `main` as `v<version>` and push the tag. The release workflow checks that the
+   tag is on `main` and matches the manifests, then publishes the notes from the changelog.

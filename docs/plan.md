@@ -1,6 +1,6 @@
 # idstack plan
 
-Status: design record, written 2026-10-27. For what has shipped (0.5.0 at time of writing), see the status line in [section 15](#15-roadmap) and [CHANGELOG.md](../CHANGELOG.md).
+Status: design record, written 2026-10-27. For what has shipped (1.0.0 at time of writing), see the status line in [section 15](#15-roadmap) and [CHANGELOG.md](../CHANGELOG.md).
 
 This document is the design and roadmap. The per-playbook specs live in [playbooks.md](playbooks.md).
 
@@ -397,8 +397,9 @@ Eval runs cost tokens, so they do not run per PR. pstack's `eval` playbook is th
 ## 14. Release and versioning
 
 - Default branch `develop`, release branch `main`. Every change lands by PR, squash merge.
-- `v0.x.y` while pre-1.0, cut from `develop`. `v1.0.0` when the exit criteria in Phase 6 hold, cut from `main`.
-- Channels: `/plugin marketplace add iuliandita/idstack` tracks the default branch (nightly). Stable users pin `iuliandita/idstack#main` or a tag.
+- `v0.x.y` while pre-1.0, cut from `develop`. `v1.0.0` and later are cut from `main`. v1.0.0 was cut on the operator's call before the Phase 6 exit criteria were met; those stay open in the roadmap.
+- A release merges `develop` into `main` with a merge commit (never a squash, so the branches share history), then tags `main`.
+- Channels: `main` is stable and is what `install.sh` and the documented install commands use. `develop`, the default branch, is the nightly; `install.sh --ref develop` or `iuliandita/idstack#develop` follows it.
 - Every release bumps `version` in all manifests (CI checks they match) and creates a tag `v<version>`, which triggers the release workflow.
 - `CHANGELOG.md` from Phase 1.
 - Track pstack. A scheduled CI job installs the latest pstack and runs the requirements check and static evals, so a pstack rename (a playbook file, a principle, `setup-pstack`) shows up as a failing job, not a user report.
@@ -407,7 +408,7 @@ Eval runs cost tokens, so they do not run per PR. pstack's `eval` playbook is th
 
 Each phase ends with a verifiable exit check.
 
-Status at v0.5.0: the artifacts of phases 1 through 5 ship (router, playbooks, principles, subagents, CLI, batteries with calibration in [jev-calibration.md](jev-calibration.md), guard for Claude Code, Codex, and OpenCode, build generators, setup skill, Codex and OpenCode files). Not shipped from phase 5: model detection in `/idstack:setup`, the `idstack-models.md` roles, and data boundaries. The dogfooding exits (real tasks, a real incident or game-day, an assurance pass on a small cluster), the nightly evals, and the pstack-tracking job are still open.
+Status at v1.0.0: the artifacts of phases 1 through 5 ship (router, playbooks, principles, subagents, CLI, batteries with calibration in [jev-calibration.md](jev-calibration.md), guard for Claude Code, Codex, and OpenCode, build generators, setup skill, Codex and OpenCode files). Not shipped from phase 5: model detection in `/idstack:setup`, the `idstack-models.md` roles, and data boundaries. The dogfooding exits (real tasks, a real incident or game-day, an assurance pass on a small cluster), the nightly evals, and the pstack-tracking job are still open.
 
 **Phase 0: bootstrap.**
 Repo, license, this plan, CI skeleton (actionlint, zizmor, gitleaks, ASCII check), issue templates.
@@ -435,6 +436,7 @@ Exit: install and a scripted smoke scenario pass on all three harnesses.
 
 **Phase 6: v1.0.**
 A user guide, every playbook out of draft, no open P1 issues, two weeks of daily use without a gate bypass.
+Status: v1.0.0 was cut on the operator's call with no open P1 issues. The user guide, a review of each playbook against real use, and the two weeks of daily use are still open and tracked as an issue.
 
 ## 16. Risks
 

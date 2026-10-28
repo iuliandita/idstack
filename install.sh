@@ -20,6 +20,7 @@ SUPPORTED=(claude codex opencode)
 HARNESSES=()
 MODE=install
 SOURCE="iuliandita/idstack"
+REF=main
 FORCE=0
 MODELS=1
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -47,6 +48,9 @@ Options:
   --dry-run       Print the commands an install would run. Changes nothing.
   --source SRC    Where to install idstack from: owner/repo, a git URL, or a
                   local checkout. Default: iuliandita/idstack.
+  --ref REF       Branch or tag for a remote source: main (stable, the default),
+                  develop (nightly), or a release tag such as v1.0.0. An existing
+                  clone keeps its branch. Ignored for a local checkout.
   --force         Back up and replace existing skill folders that collide with
                   pstack skills, and pstack model files idstack did not write.
   --no-models     Leave pstack's per-role model files alone.
@@ -157,6 +161,9 @@ parse_args() {
       --source)
         [[ $# -ge 2 ]] || { err "--source needs a value"; exit 2; }
         SOURCE=$2; shift 2 ;;
+      --ref)
+        [[ $# -ge 2 ]] || { err "--ref needs a value"; exit 2; }
+        REF=$2; shift 2 ;;
       --force) FORCE=1; shift ;;
       --no-models) MODELS=0; shift ;;
       -h|--help) usage; exit 0 ;;
@@ -231,7 +238,7 @@ claude_install() {
     log "  pstack@cursor-plugins already installed"
   fi
   if ! claude_has_marketplace idstack; then
-    run claude plugin marketplace add "$SOURCE"
+    if is_local_source; then run claude plugin marketplace add "$SOURCE"; else run claude plugin marketplace add "$SOURCE#$REF"; fi
   else
     run claude plugin marketplace update idstack
   fi
@@ -292,7 +299,7 @@ codex_check() {
 codex_install() {
   log "Codex"
   if ! codex_has_marketplace idstack; then
-    run codex plugin marketplace add "$SOURCE"
+    if is_local_source; then run codex plugin marketplace add "$SOURCE"; else run codex plugin marketplace add "$SOURCE" --ref "$REF"; fi
   elif ! is_local_source; then
     run codex plugin marketplace upgrade idstack
   fi
@@ -440,7 +447,7 @@ idstack_checkout() {
     git -C "$IDSTACK_SRC" pull -q --ff-only
   else
     mkdir -p "$IDSTACK_CACHE_DIR"
-    git clone -q "$url" "$IDSTACK_SRC"
+    git clone -q -b "$REF" "$url" "$IDSTACK_SRC"
   fi
 }
 
@@ -616,7 +623,7 @@ main() {
     fi
   done
 
-  log "idstack $MODE for: ${HARNESSES[*]} (source: $SOURCE)"
+  log "idstack $MODE for: ${HARNESSES[*]} (source: $SOURCE$(is_local_source || printf ' @ %s' "$REF"))"
   case $MODE in
     check)
       wants claude && claude_check

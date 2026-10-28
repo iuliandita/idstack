@@ -191,6 +191,10 @@ def main() -> int:
 
     scenarios = json.loads((ROOT / "fixtures/evals/scenarios.json").read_text())
     if a.scenario:
+        unknown = set(a.scenario) - {s["id"] for s in scenarios}
+        if unknown:
+            print(f"error: unknown scenario {', '.join(sorted(unknown))}", file=sys.stderr)
+            return 2
         scenarios = [s for s in scenarios if s["id"] in a.scenario]
     out = Path(a.out) if a.out else None
     if out:

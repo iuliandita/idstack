@@ -134,7 +134,7 @@ def resolve(value: str, harness: str, reachable: set[str]) -> list[str]:
     picks = []
     for member in (v.strip() for v in value.split(",")):
         pick = "parent"
-        for group in member.split(" else "):
+        for group in [] if member in ("inherit-parent", "auto") else member.split(" else "):
             options = [OPTION.match(o.strip()).groups() for o in group.split(" or ")]
             options = [(m, e, via or harness) for m, e, via in options]
             home = [o for o in options if o[2] == harness]
