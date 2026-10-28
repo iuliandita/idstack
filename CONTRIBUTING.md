@@ -10,6 +10,8 @@ Report suspected vulnerabilities through [SECURITY.md](SECURITY.md), not a publi
 - `docs/plan.md` is the design. Change it in the same PR as any change that departs from it.
 - The three manifests (`plugin.json`, `.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json`)
   carry the same version. Bump all three for a release.
+- `config/pstack-models.json` sets pstack's model per role. Keep it in line with the routing research,
+  and run `python3 scripts/pstack_models.py --dry-run` after editing; it rejects unknown models.
 - `PSTACK_MIRROR_REF` in `install.sh` pins the pstack mirror for Codex and OpenCode. Move it only
   after running the installer against the new commit.
 

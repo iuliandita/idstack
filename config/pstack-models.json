@@ -1,0 +1,53 @@
+{
+  "claude": {
+    "budget": "medium (high)",
+    "notes": [
+      "Claude Code subagents take only opus, sonnet, haiku, or fable, so panels and the cross-judge stay inside one family here."
+    ],
+    "roles": {
+      "feature, refactoring": "sonnet medium",
+      "bug-fix": "sonnet high",
+      "perf-issue": "sonnet high",
+      "hillclimb": "sonnet medium",
+      "judgment and prose": "opus medium",
+      "hardest tasks": "opus high",
+      "how explorer": "haiku medium",
+      "how explainer": "sonnet medium",
+      "why investigators": "haiku medium",
+      "why synthesizer": "opus high",
+      "reflect tooling": "haiku medium",
+      "reflect judgment, divergent, synthesizer": "opus medium",
+      "arena runners": "opus high, sonnet high",
+      "arena cross-judge pool": "sonnet high",
+      "swarm workers": "sonnet medium",
+      "architect runners": "opus high, sonnet high",
+      "interrogate reviewers": "opus high, sonnet high"
+    }
+  },
+  "agents": {
+    "budget": "medium (high)",
+    "notes": [
+      "Model names are Codex slugs. Never use the fast or ultra tiers for these roles.",
+      "OpenCode: use opencode-go/deepseek-v4.1-flash for every role (thinking on, except for lookups)."
+    ],
+    "roles": {
+      "feature, refactoring": "gpt-6.1-terra medium",
+      "bug-fix": "gpt-6.1-sol high",
+      "perf-issue": "gpt-6.1-sol high",
+      "hillclimb": "gpt-6.1-terra medium",
+      "judgment and prose": "gpt-6.1-sol medium",
+      "hardest tasks": "gpt-6.1-sol high",
+      "how explorer": "gpt-6-luna medium",
+      "how explainer": "gpt-6.1-terra medium",
+      "why investigators": "gpt-6-luna medium",
+      "why synthesizer": "gpt-6.1-sol high",
+      "reflect tooling": "gpt-6-luna medium",
+      "reflect judgment, divergent, synthesizer": "gpt-6.1-sol medium",
+      "arena runners": "gpt-6.1-sol high, gpt-6.1-terra high",
+      "arena cross-judge pool": "gpt-6.1-terra high",
+      "swarm workers": "gpt-6.1-terra medium",
+      "architect runners": "gpt-6.1-sol high, gpt-6.1-terra high",
+      "interrogate reviewers": "gpt-6.1-sol high, gpt-6.1-terra high"
+    }
+  }
+}

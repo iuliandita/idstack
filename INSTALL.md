@@ -5,6 +5,7 @@
 - Requirements
 - Install with the script
 - What the script does on each harness
+- pstack model files
 - Install by hand
 - Check, update, and channels
 - Uninstall
@@ -32,8 +33,9 @@ cd idstack
 | `--check` | Report what is installed and what is missing. Changes nothing. |
 | `--dry-run` | Print the commands an install would run. Changes nothing. |
 | `--source SRC` | Install idstack from `owner/repo`, a git URL, or a local checkout. Default: `iuliandita/idstack`. |
-| `--force` | Codex and OpenCode: back up and replace existing skill folders that share a name with a pstack skill. |
-| `--uninstall` | Remove idstack. pstack stays. |
+| `--force` | Back up and replace skill folders that share a name with a pstack skill, and pstack model files idstack did not write. |
+| `--no-models` | Leave pstack's per-role model files alone. |
+| `--uninstall` | Remove idstack and the model files it wrote. pstack stays. |
 
 Running the script twice is safe. Each step checks the current state first and skips what is
 already done.
@@ -73,6 +75,31 @@ leaves it alone and reports it as installed outside the script.
 folder under `skills/` into `~/.config/opencode/skills`. It writes the list of links to
 `~/.config/opencode/skills/.idstack-install.json`. It never replaces a folder that is not one of its
 links.
+
+## pstack model files
+
+pstack picks a model and effort for each subagent role from a settings file. Without one it uses
+its own defaults, which run judgment roles on Opus at `xhigh` and code roles on the session model.
+The script writes both settings files from [config/pstack-models.json](config/pstack-models.json):
+
+| File | Read by | Models |
+| --- | --- | --- |
+| `~/.claude/rules/pstack-models.md` | Claude Code, loaded into every session | Haiku for exploration, Sonnet for code, Opus for judgment and the hardest tasks |
+| `~/.agents/pstack-models.md` | Codex and OpenCode, read when pstack picks a model | Luna for exploration, Terra for routine code, Sol for debugging, judgment, and the hardest tasks; OpenCode is told to use DeepSeek Flash |
+
+Effort starts at `medium` and goes to `high` only for hard roles. Before writing, the script
+checks every role is present, every Claude model is one Claude Code accepts, and, when `codex` is
+installed, every Codex model and effort is in `codex debug models`.
+
+Each file carries a `managed by idstack` line. The script replaces only files with that line. If
+you ran `/setup-pstack` yourself, it leaves your file alone and reports it; `--force` backs it up
+to `.idstack-backups/` next to the file and replaces it. Delete the marker line to keep your own
+edits, or change the JSON and rerun `./install.sh`. To run the step on its own:
+
+```sh
+python3 scripts/pstack_models.py --check
+python3 scripts/pstack_models.py --target claude
+```
 
 ## Install by hand
 
@@ -115,7 +142,7 @@ OpenCode: install pstack the same way with `-a opencode`, then link the folders 
 ./install.sh --uninstall
 ```
 
-This removes idstack from each harness and leaves pstack in place. To remove pstack too:
+This removes idstack and the model files it wrote from each harness, and leaves pstack in place. To remove pstack too:
 
 - Claude Code: `claude plugin uninstall pstack@cursor-plugins`.
 - Codex and OpenCode: delete the folders listed in `~/.agents/skills/.pstack-install.json`, then

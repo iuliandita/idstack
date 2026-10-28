@@ -17,6 +17,8 @@ HARNESSES=()
 MODE=install
 SOURCE="iuliandita/idstack"
 FORCE=0
+MODELS=1
+SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 FAILED=0
 MISSING=0
 CLEANUP=()
@@ -41,13 +43,15 @@ Options:
   --dry-run       Print the commands an install would run. Changes nothing.
   --source SRC    Where to install idstack from: owner/repo, a git URL, or a
                   local checkout. Default: iuliandita/idstack.
-  --force         Codex and OpenCode only: back up and replace existing skill
-                  folders whose names collide with pstack skills.
+  --force         Back up and replace existing skill folders that collide with
+                  pstack skills, and pstack model files idstack did not write.
+  --no-models     Leave pstack's per-role model files alone.
   --uninstall     Remove idstack. pstack is left in place.
   -h, --help      Show this help.
 
 pstack comes from the cursor/plugins marketplace on Claude Code, and from the
-backnotprop/pstack mirror, pinned to one commit, on Codex and OpenCode.
+backnotprop/pstack mirror, pinned to one commit, on Codex and OpenCode. Its
+per-role model files are written from config/pstack-models.json.
 
 Environment:
   CLAUDE_CONFIG_DIR, CODEX_HOME   honored by the harness CLIs
@@ -144,6 +148,7 @@ parse_args() {
         [[ $# -ge 2 ]] || { err "--source needs a value"; exit 2; }
         SOURCE=$2; shift 2 ;;
       --force) FORCE=1; shift ;;
+      --no-models) MODELS=0; shift ;;
       -h|--help) usage; exit 0 ;;
       *) err "unknown option: $1"; usage >&2; exit 2 ;;
     esac
@@ -461,6 +466,17 @@ opencode_uninstall() {
   run rm "$IDSTACK_MANIFEST"
 }
 
+models_step() {
+  # models_step [--check|--dry-run|--uninstall]
+  [[ $MODELS -eq 1 ]] || return 0
+  local args=()
+  wants claude && args+=(--target claude)
+  if wants codex || wants opencode; then args+=(--target agents); fi
+  [[ $FORCE -eq 1 ]] && args+=(--force)
+  log "pstack model files"
+  python3 -I "$SCRIPT_DIR/scripts/pstack_models.py" "${args[@]}" "$@"
+}
+
 main() {
   parse_args "$@"
   need python3 git
@@ -487,6 +503,7 @@ main() {
       fi
       wants codex && codex_check
       wants opencode && opencode_check
+      models_step --check || MISSING=1
       if [[ $MISSING -ne 0 ]]; then
         log "Something is missing. Run install.sh to fix it."
         exit 1
@@ -498,6 +515,7 @@ main() {
       if wants codex || wants opencode; then pstack_install; fi
       wants codex && codex_install
       wants opencode && opencode_install
+      if [[ $MODE == dry-run ]]; then models_step --dry-run || FAILED=1; else models_step || FAILED=1; fi
       if [[ $FAILED -ne 0 ]]; then
         err "install finished with errors"
         exit 1
@@ -508,6 +526,7 @@ main() {
       wants claude && claude_uninstall
       wants codex && codex_uninstall
       wants opencode && opencode_uninstall
+      models_step --uninstall
       log "Done. pstack was left in place."
       ;;
   esac
