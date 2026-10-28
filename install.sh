@@ -94,6 +94,7 @@ need() {
 jq_op() {
   # jq_op <op> [arg]; reads JSON on stdin. Ops:
   #   claude-plugin ID | codex-plugin ID  -> enabled, disabled, or absent
+  #   codex-source ID -> marketplace path an installed Codex plugin came from
   #   claude-market NAME | codex-market NAME -> yes or no
   #   field KEY -> the string value, or empty
   #   lines KEY -> one list item per line
@@ -113,6 +114,9 @@ if op == "claude-plugin":
     print(state(d or [], "id"))
 elif op == "codex-plugin":
     print(state((d or {}).get("installed", []), "pluginId"))
+elif op == "codex-source":
+    print(next((p.get("source", {}).get("path", "") for p in (d or {}).get("installed", [])
+                if p.get("pluginId") == arg), ""))
 elif op in ("claude-market", "codex-market"):
     items = d if isinstance(d, list) else (d or {}).get("marketplaces", [])
     print("yes" if any(m.get("name") == arg for m in items) else "no")
@@ -255,11 +259,27 @@ codex_has_marketplace() {
   [[ $(codex plugin marketplace list --json 2>/dev/null | jq_op codex-market "$1") == yes ]]
 }
 
+codex_plugin_outdated() {
+  # true when the marketplace version is not among the versions in the Codex plugin cache
+  local src want
+  src=$(codex plugin list --json 2>/dev/null | jq_op codex-source idstack@idstack)
+  # Codex names its cache after the version in .claude-plugin/plugin.json, not the root plugin.json.
+  [[ -n $src && -f $src/.claude-plugin/plugin.json ]] || return 1
+  want=$(jq_op field version <"$src/.claude-plugin/plugin.json")
+  [[ -n $want && ! -d ${CODEX_HOME:-$HOME/.codex}/plugins/cache/idstack/idstack/$want ]]
+}
+
 codex_check() {
   log "Codex"
   local state
   state=$(codex_plugin_state idstack@idstack)
-  if [[ $state == enabled ]]; then status "idstack@idstack" ok; else status "idstack@idstack" "$state"; fi
+  if [[ $state == enabled ]] && codex_plugin_outdated; then
+    status "idstack@idstack" outdated "a newer version is in the marketplace"
+  elif [[ $state == enabled ]]; then
+    status "idstack@idstack" ok
+  else
+    status "idstack@idstack" "$state"
+  fi
 }
 
 codex_install() {
@@ -270,6 +290,10 @@ codex_install() {
     run codex plugin marketplace upgrade idstack
   fi
   if [[ $(codex_plugin_state idstack@idstack) == absent ]]; then
+    run codex plugin add idstack@idstack
+  elif codex_plugin_outdated; then
+    # Codex has no plugin update and caches one copy per version, so reinstall.
+    run codex plugin remove idstack@idstack
     run codex plugin add idstack@idstack
   else
     log "  idstack@idstack already installed"

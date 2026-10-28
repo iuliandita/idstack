@@ -6,6 +6,11 @@ v0.x is the prerelease phase, where breaking changes are expected.
 
 ## Unreleased
 
+### Fixed
+
+- Codex now gets new idstack versions: the installer reinstalls the plugin when the marketplace
+  version is missing from the Codex plugin cache, and `--check` reports it as outdated.
+
 ## [0.1.0] - 2026-10-28
 
 First prerelease: the installer, plugin manifests, model routing, CI, and docs. No idstack
