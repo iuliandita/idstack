@@ -6,6 +6,10 @@ v0.x is the prerelease phase, where breaking changes are expected.
 
 ## Unreleased
 
+### Changed
+
+- README lists what pstack ships and what idstack adds, overlays, or leaves out.
+
 ## [0.2.0] - 2026-10-28
 
 The skills ship: `/idstack:id-mode` now exists and routes infra work.

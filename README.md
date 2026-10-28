@@ -67,6 +67,145 @@ to idstack's playbooks; everything else goes to pstack's, unchanged.
 Domain knowledge (how Terraform, Kubernetes, or Prometheus work) stays in separate domain skills.
 idstack holds the process. The design is in [docs/plan.md](docs/plan.md).
 
+## What's inside
+
+What pstack ships (as of pstack 0.15.36) and what idstack adds. **Bold** rows come from idstack.
+
+### Routers
+
+| Skill | Source | Role |
+| --- | --- | --- |
+| `poteto-mode` | pstack | Main router: principles, triggers, reply style, subagent rules, playbook catalog |
+| `poteto-help` | pstack | Helps pick a skill, playbook, or principle |
+| `setup-pstack` | pstack | Model per role, set interactively; idstack's installer writes this file instead |
+| **`id-mode`** | **idstack** | **Infra router over `poteto-mode`; idstack gates win, repo rules win over idstack** |
+
+### Playbooks
+
+In idstack: **new** is an idstack playbook, **overlay** means pstack's playbook plus idstack gates,
+**unchanged** means pstack's as-is, **not for infra** means `id-mode` doesn't route infra work there.
+
+| Playbook | Source | In idstack | For |
+| --- | --- | --- | --- |
+| investigation | pstack | unchanged | Read-only questions: how does X work, X or Y |
+| bug-fix | pstack | overlay | Reproduce in live state read-only; fix through a change playbook |
+| perf-issue | pstack | not for infra | App slowness against a baseline |
+| hillclimb | pstack | not for infra | Iterative improvement of one metric |
+| runtime-forensics | pstack | unchanged | Diagnose a live app symptom from instrumentation |
+| trace-forensics | pstack | not for infra | Diagnose a captured profile or trace |
+| feature | pstack | unchanged | New app behavior from a data shape |
+| refactoring | pstack | unchanged | Behavior-preserving restructure |
+| prototype | pstack | not for infra | Throwaway sketch to settle a decision |
+| visual-parity | pstack | not for infra | Pixel-exact UI match |
+| authoring-a-skill | pstack | unchanged | Write or edit a SKILL.md |
+| eval | pstack | unchanged | Test a skill or prompt change on agent behavior |
+| babysit | pstack | overlay | `gh` or `glab`; a deploying merge is a gate; classify CI failures before one retry |
+| shipping | pstack | overlay | One gate per deploying merge, live verification between merges |
+| autonomous-run | pstack | overlay | The exit predicate stops before any live change no grant covers |
+| orchestrate | pstack | unchanged | Multi-day program with one coordinator |
+| autopilot-full | pstack | unchanged | Queue of PRs driven to merged |
+| autopilot-stack | pstack | unchanged | The same, operator merges |
+| session-pickup | pstack | unchanged | Take over another agent's work |
+| pause-safely | pstack | overlay | Checkpoint also records targets, held gates, stale plans, half-applied changes |
+| multi-phase-plan | pstack | unchanged | Work across phases or stacked PRs |
+| worktree-cleanup | pstack | unchanged | Prune worktrees and simulators |
+| opening-a-pr | pstack | overlay | Repo conventions, issue reference, no AI attribution, public-repo hygiene check |
+| **iac-change** | **idstack** | **new** | **Terraform or OpenTofu, from edit to verified apply** |
+| **gitops-change** | **idstack** | **new** | **Kubernetes, Helm, Kustomize via ArgoCD or Flux** |
+| **host-config-change** | **idstack** | **new** | **Ansible: canary, idempotence rerun, then the fleet** |
+| **edge-change** | **idstack** | **new** | **DNS, proxy, firewall, VPN, TLS, allowlists** |
+| **dependency-bump** | **idstack** | **new** | **Renovate or Dependabot backlogs; chart, provider, image, action bumps** |
+| **upgrade** | **idstack** | **new** | **Clusters, platforms, managed services, hypervisors, apps** |
+| **queue-burndown** | **idstack** | **new** | **A queue of PRs landed in order, with plan and apply** |
+| **env-promotion** | **idstack** | **new** | **dev to QA to prod with only intended differences** |
+| **decommission** | **idstack** | **new** | **Prove unused, park, soak, then tear down** |
+| **secret-rotation** | **idstack** | **new** | **Rotate a credential across every consumer, including leaks** |
+| **live-diagnosis** | **idstack** | **new** | **Read-only triage of a live symptom to a mechanism** |
+| **incident** | **idstack** | **new** | **Declare, mitigate, draft messages, postmortem** |
+| **restore-drill** | **idstack** | **new** | **Prove backups are fresh, independent, and restorable** |
+| **drift-audit** | **idstack** | **new** | **Where live state differs from code** |
+| **observability-audit** | **idstack** | **new** | **Coverage, alert hygiene, SLOs, cardinality** |
+| **security-posture** | **idstack** | **new** | **Periodic own-asset security check against a baseline** |
+| **vuln-response** | **idstack** | **new** | **One CVE: exposure, patch, proof it is gone** |
+| **capacity-cost** | **idstack** | **new** | **Storage forecasts, right-sizing, spend, seats** |
+| **readiness-review** | **idstack** | **new** | **Is a new service ready to depend on** |
+| **agent-hosting** | **idstack** | **new** | **What self-hosted agents and bots can reach** |
+| **closeout** | **idstack** | **new** | **End-of-session sweep and what's left** |
+
+### Principles
+
+| Principle | Source | Applies when |
+| --- | --- | --- |
+| laziness-protocol | pstack | Sizing a diff, tempted to add layers |
+| foundational-thinking | pstack | Choosing core types and structures first |
+| redesign-from-first-principles | pstack | Fitting a new requirement into an old design |
+| attack-the-premise | pstack | Two fixes with one premise failed |
+| subtract-before-you-add | pstack | Removing dead weight before building |
+| minimize-reader-load | pstack | Code that is hard to trace |
+| outcome-oriented-execution | pstack | Planned rewrites and migrations |
+| experience-first | pstack | Product and UX tradeoffs |
+| exhaust-the-design-space | pstack | A novel decision with no precedent |
+| build-the-lever | pstack | Building the tool that does or proves the work |
+| model-the-domain | pstack | Stateful or heavily branching logic |
+| boundary-discipline | pstack | Validation and errors at system boundaries |
+| type-system-discipline | pstack | Designing types and signatures |
+| make-operations-idempotent | pstack | Anything that runs amid crashes and retries |
+| migrate-callers-then-delete-legacy-apis | pstack | Replacing an internal API |
+| separate-before-serializing-shared-state | pstack | Concurrent writers to one file, branch, or key |
+| prove-it-works | pstack | Before declaring done |
+| fix-root-causes | pstack | Debugging |
+| sequence-verifiable-units | pstack | Multi-step work and commit or PR order |
+| test-behavior-not-implementation | pstack | Writing or keeping tests |
+| explain-the-number | pstack | Before trusting a measured number |
+| guard-the-context-window | pstack | Context filling up |
+| never-block-on-the-human | pstack | Reversible work only; idstack never applies it to live changes |
+| encode-lessons-in-structure | pstack | The same instruction a second time |
+| **plan-before-apply** | **idstack** | **Any live change: only a reviewed plan, diff, or check output goes in** |
+| **pin-the-target** | **idstack** | **Any live command: name, check, and pass the target explicitly** |
+| **prove-the-restore** | **idstack** | **Backups: unrestored is unproven, and independent of the source** |
+| **reversible-first** | **idstack** | **Park before teardown, canary before fleet, one rule at a time** |
+
+### Subagents
+
+| Agent | Source | Job |
+| --- | --- | --- |
+| poteto-agent | pstack | Delegate inside a `poteto-mode` run |
+| comment-sicko | pstack | Hunts needless code comments |
+| **id-agent** | **idstack** | **Delegate inside an `id-mode` run: pinned target, read-only unless a gate passed** |
+| **plan-reader** | **idstack** | **Read-only plan, diff, or check-mode summary: deletes, replaces, data, IAM, network, out of scope** |
+| **change-verifier** | **idstack** | **Independent read-only check, from live state, that a change landed** |
+
+### pstack workflow skills
+
+idstack adds none of these and calls some of them from its playbooks.
+
+| Skill | For | Used by idstack |
+| --- | --- | --- |
+| how, why, teach | Walkthroughs, design rationale, plain explanations | through pstack |
+| architect, arena, swarm, interrogate | Design sketches, bakeoffs, fan-out, adversarial review | through pstack |
+| blast-radius | What a change could break beyond the diff | through pstack |
+| figure-it-out | A one-off playbook when none fits | fallback router target |
+| show-me-your-work | Decision trail for long or unattended work | evidence log |
+| recall, reflect, correct, automate-me | Context recovery, learning, mistake-proofing, style capture | |
+| sharpen, in-your-own-words, ketchup, ketchup-video, bro | Prompting and catch-up | |
+| unslop, technical-writing, no-comments | Prose and comment hygiene | |
+| tdd, benchmark-checklist, statechart | Tests, measurements, state models | |
+| create-verification-skill, maintain-verification-skill | Project skill that drives the app like a user | |
+| create-formal-verification-skill, maintain-formal-verification-skill | Formal proofs of key properties | |
+| typescript-best-practices, make-bot-ui | Language and UI specifics | |
+
+### idstack tooling
+
+| Item | Status | What it does |
+| --- | --- | --- |
+| `install.sh` | shipped | Installs pstack where missing, then idstack, on Claude Code, Codex, and OpenCode |
+| pstack model files | shipped | Per-role models from `config/pstack-models.json`, routed across providers through T3 Code or each provider's CLI, with a native fallback |
+| `scripts/check.py` | shipped | ASCII, manifests, links, router catalog against playbook files, names |
+| `idstack` CLI (`plan-summary`, `judge`, `doctor`) | planned | Deterministic plan summary, Jev batteries, credential check |
+| Guard hook | planned | Ask before state-mutating shell commands |
+| `/idstack:setup` | planned | Model detection, guard install, read-only credentials guide |
+| Codex and OpenCode subagent files | planned | Native `id-agent`, `plan-reader`, `change-verifier` on those harnesses |
+
 ## Compatibility
 
 | Harness | idstack | pstack |
