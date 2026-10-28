@@ -48,6 +48,12 @@ class PlanSummaryTest(unittest.TestCase):
             ("out of scope fails", {"resource_changes": PLAN["resource_changes"][:2]}, ["aws_instance.*"], False),
             ("empty plan fails", {}, ["*"], False),
             ("iam fails", {"resource_changes": PLAN["resource_changes"][2:3]}, ["*"], False),
+            ("import outside scope fails", {"resource_changes": [dict(rc("aws_instance.prod", "aws_instance", ["no-op"], {}, {}),
+                                                                       change={"actions": ["no-op"], "importing": {"id": "i-1"}})]},
+             ["aws_instance.dev"], False),
+            ("public db fails", {"resource_changes": [rc("aws_db_instance.prod", "aws_db_instance", ["update"],
+                                                         {"publicly_accessible": False}, {"publicly_accessible": True})]},
+             ["*"], False),
             ("errored fails", {"errored": True, "resource_changes": PLAN["resource_changes"][:1]}, ["*"], False),
         ]
         for name, plan, scope, ok in cases:
@@ -98,6 +104,14 @@ class GuardTest(unittest.TestCase):
             "uv run idstack guard uninstall --harness codex": True,
             "script -q -c 'idstack guard disable' /dev/null": True,
             "idstack guard test kubectl get pods": False,
+            "aws s3 rm s3://example-bucket/idstack --recursive": True,
+            "sudo -u root aws s3 rm s3://example-bucket --recursive": True,
+            "if true; then aws s3 rm s3://example-bucket --recursive; fi": True,
+            "aws s3 \\\n  rm s3://example-bucket --recursive": True,
+            "kubectl --request-timeout 30s delete namespace prod": True,
+            "aws s3 sync ./empty s3://example-bucket --delete": True,
+            "aws s3 sync s3://example-bucket ./local": False,
+            "systemctl --host example.com restart nginx": True,
         }
         for cmd, match in cases.items():
             with self.subTest(cmd):
@@ -138,7 +152,8 @@ class GuardTest(unittest.TestCase):
         self.assertEqual(r.returncode, 1, "allow-once must refuse without a terminal")
         token = {idstack.cmd_hash("kubectl delete pod x"): time.time() + 60}
         (Path(self.state) / "guard-allow.json").write_text(json.dumps(token))
-        self.assertIsNone(self.hook("codex", "kubectl  delete pod x"))
+        self.assertEqual(self.hook("codex", "kubectl  delete pod x")["hookSpecificOutput"]["permissionDecision"], "deny")
+        self.assertIsNone(self.hook("codex", "kubectl delete pod x"))
         self.assertEqual(self.hook("codex", "kubectl delete pod x")["hookSpecificOutput"]["permissionDecision"], "deny")
 
 
@@ -153,6 +168,7 @@ class JevRuleTest(unittest.TestCase):
             (above, ans(a=0.3, b=0.1), "unsettled"),
             (above, ans(a=0.1), "unsettled"),
             (above, None, "unsettled"),
+            (above, {"a": None, "b": {"noul": 0.1}}, "unsettled"),
             (below, ans(s=0.9), "clear"),
             (below, ans(s=0.5), "flag"),
         ]

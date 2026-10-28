@@ -5,6 +5,8 @@
 # `safe_flags`: any of these present makes the command read-only for this tool.
 # `any_verb_regex`: matched against every positional argument instead of the first ones.
 # `requires`: a positional argument that must also be present (for example a subcommand).
+# `danger_flags`: any of these flags makes the command match, whatever the verb.
+# `remote_flags`: with `remote_only`, any of these flags counts as a remote target.
 # The guard is a seatbelt, not a lock: aliases, scripts, and quoting can hide a verb.
 
 [[rule]]
@@ -20,13 +22,18 @@ reason = "changes infrastructure or state"
 
 [[rule]]
 tools = ["kubectl", "oc"]
-value_flags = ["-n", "--namespace", "--context", "--kubeconfig", "--cluster", "--user", "-s", "--server", "--as", "--token"]
+value_flags = ["-n", "--namespace", "--context", "--kubeconfig", "--cluster", "--user", "-s", "--server", "--as", "--token",
+               "--as-group", "--as-uid", "--cache-dir", "--certificate-authority", "--client-certificate", "--client-key",
+               "--log-flush-frequency", "--password", "--profile", "--profile-output", "--request-timeout",
+               "--tls-server-name", "--username", "-v", "--v", "--vmodule"]
 verbs = ["apply", "create", "delete", "patch", "replace", "scale", "autoscale", "drain", "cordon", "uncordon", "edit", "label", "annotate", "taint", "rollout restart", "rollout undo", "rollout pause", "rollout resume", "set", "expose", "run", "exec", "cp"]
 reason = "changes cluster state"
 
 [[rule]]
 tools = ["helm"]
-value_flags = ["-n", "--namespace", "--kube-context", "--kubeconfig"]
+value_flags = ["-n", "--namespace", "--kube-context", "--kubeconfig", "--burst-limit", "--kube-apiserver", "--kube-as-group",
+               "--kube-as-user", "--kube-ca-file", "--kube-tls-server-name", "--kube-token", "--qps", "--registry-config",
+               "--repository-cache", "--repository-config"]
 verbs = ["install", "upgrade", "uninstall", "delete", "rollback", "plugin install", "repo remove"]
 reason = "changes a Helm release"
 
@@ -38,7 +45,9 @@ reason = "changes ArgoCD application state"
 
 [[rule]]
 tools = ["flux"]
-value_flags = ["-n", "--namespace", "--context", "--kubeconfig"]
+value_flags = ["-n", "--namespace", "--context", "--kubeconfig", "--timeout", "--cache-dir", "--server", "--token",
+               "--as", "--as-group", "--as-uid", "--certificate-authority", "--client-certificate", "--client-key",
+               "--cluster", "--user", "--request-timeout", "--tls-server-name"]
 verbs = ["reconcile", "suspend", "resume", "delete", "create", "bootstrap", "uninstall"]
 reason = "changes Flux reconciliation"
 
@@ -80,7 +89,8 @@ reason = "changes a libvirt guest or storage"
 [[rule]]
 tools = ["aws"]
 value_flags = ["--profile", "--region", "--output", "--endpoint-url", "--query", "--color"]
-any_verb_regex = "^(delete|terminate|destroy|remove|deregister|revoke|stop|reboot|disable|detach|disassociate|rb|rm)(-|$)"
+any_verb_regex = "^(delete|terminate|destroy|remove|deregister|revoke|stop|reboot|disable|detach|disassociate|rb|rm|mv)(-|$)"
+danger_flags = ["--delete"]
 reason = "deletes or stops cloud resources"
 
 [[rule]]
@@ -92,6 +102,8 @@ reason = "deletes or stops cloud resources"
 [[rule]]
 tools = ["systemctl"]
 remote_only = true
+remote_flags = ["-H", "--host", "-M", "--machine"]
+value_flags = ["-H", "--host", "-M", "--machine", "-p", "--property", "-t", "--type", "-s", "--signal", "--state"]
 verbs = ["restart", "stop", "disable", "mask", "kill", "reboot", "poweroff", "halt", "isolate"]
 reason = "changes a service on a remote host"
 

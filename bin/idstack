@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 import fnmatch
+import fcntl
 import hashlib
 import json
 import os
@@ -52,6 +53,25 @@ IAM = re.compile(r"(iam|_role|role_|policy|binding|_member$|service_account|rbac
 NOT_IAM = re.compile(r"(network_policy|firewall_policy|security_policy|lifecycle_policy|scaling_policy|backup_policy)", re.I)
 NETWORK = re.compile(r"(security_group|firewall|network_policy|network_acl|route|subnet|vpc|vnet|cidr|ingress|egress|"
                      r"load_balancer|_lb|lb_|nat|peering|gateway|endpoint|_record$|dns|listener|target_group|tunnel|vpn)", re.I)
+EXPOSURE_ATTR = re.compile(r"(public|cidr|ingress|egress|source_ranges|allowed_ip|ip_range|firewall|security_group|"
+                           r"port|allowlist|whitelist|listen|authorized_networks)", re.I)
+IAM_ATTR = re.compile(r"(policy|role|iam|permission|acl|principal|grant|member|binding|service_account)", re.I)
+WORLD = re.compile(r"(0\.0\.0\.0/0|::/0)")
+
+
+def attr_flags(change: dict) -> tuple[bool, bool]:
+    """(iam, network) from the attributes a change touches, for resources whose type does not say."""
+    before, after = change.get("before") or {}, change.get("after") or {}
+    if not isinstance(before, dict) or not isinstance(after, dict):
+        return False, False
+    unknown = change.get("after_unknown") or {}
+    changed = {k for k in set(before) | set(after) | set(unknown)
+               if before.get(k) != after.get(k) or unknown.get(k)} if before else set()
+    newly_world = bool(WORLD.search(json.dumps(after))) and not WORLD.search(json.dumps(before))
+    public_on = any(after.get(k) is True and before.get(k) is not True for k in after if "public" in k.lower())
+    network = newly_world or public_on or any(EXPOSURE_ATTR.search(k) for k in changed)
+    iam = any(IAM_ATTR.search(k) for k in changed)
+    return iam, network
 
 
 def action_kind(actions: list[str]) -> str:
@@ -84,23 +104,27 @@ def summarize_plan(plan: dict, scope: list[str], predicate: bool, allow_iam: boo
     counts: dict[str, int] = {}
     changes = []
     for rc in plan.get("resource_changes", []):
-        kind = action_kind(rc.get("change", {}).get("actions", ["no-op"]))
+        change = rc.get("change", {})
+        kind = action_kind(change.get("actions", ["no-op"]))
+        if change.get("importing") and kind == "no-op":
+            kind = "import"
         counts[kind] = counts.get(kind, 0) + 1
         if kind in ("no-op", "read"):
             continue
         rtype, addr = rc.get("type", ""), rc.get("address", "")
+        attr_iam, attr_network = attr_flags(change)
         changes.append({
             "address": addr, "type": rtype, "action": kind,
-            "importing": bool(rc.get("change", {}).get("importing")),
+            "importing": bool(change.get("importing")),
             "stateful": bool(STATEFUL.search(rtype)),
-            "iam": bool(IAM.search(rtype)) and not NOT_IAM.search(rtype),
-            "network": bool(NETWORK.search(rtype)),
+            "iam": (bool(IAM.search(rtype)) and not NOT_IAM.search(rtype)) or attr_iam,
+            "network": bool(NETWORK.search(rtype)) or attr_network,
             "in_scope": (not scope) or any(fnmatch.fnmatchcase(addr, p) for p in scope),
             "diff": change_diff(rc.get("change", {})),
         })
     destructive = [c for c in changes if c["action"] in ("delete", "replace", "forget")]
     out_of_scope = [c for c in changes if not c["in_scope"]]
-    unknown = [c for c in changes if c["action"] not in ("create", "update", "delete", "replace", "forget")]
+    unknown = [c for c in changes if c["action"] not in ("create", "update", "import", "delete", "replace", "forget")]
     result = {
         "counts": counts,
         "changes": changes,
@@ -180,7 +204,8 @@ def jev_ask(battery: dict, item, key: str, timeout: float = 30) -> tuple[dict | 
 
 
 def jev_outcome(battery: dict, answers: dict | None) -> tuple[str, dict]:
-    probs = {q: (answers or {}).get(q, {}).get("noul") for q in battery["questions"]}
+    raw = answers if isinstance(answers, dict) else {}
+    probs = {q: raw[q].get("noul") if isinstance(raw.get(q), dict) else None for q in battery["questions"]}
     if answers is None or any(not isinstance(p, (int, float)) for p in probs.values()):
         return "unsettled", probs
     t, rule = battery["threshold"], battery["rule"]
@@ -457,6 +482,19 @@ def cmd_build(a) -> int:
 # --- guard ----------------------------------------------------------------------------------
 
 WRAPPERS = {"sudo", "doas", "env", "nice", "nohup", "time", "timeout", "command", "exec", "stdbuf", "ionice", "watch", "unbuffer"}
+WRAPPER_VALUE_FLAGS = {
+    "sudo": {"-u", "-g", "-h", "-p", "-C", "-D", "-r", "-t", "-U", "-T", "--user", "--group", "--host", "--prompt",
+             "--chdir", "--role", "--type", "--other-user", "--close-from", "--command-timeout"},
+    "doas": {"-u", "-C"},
+    "env": {"-u", "-C", "--unset", "--chdir"},
+    "nice": {"-n", "--adjustment"},
+    "timeout": {"-s", "-k", "--signal", "--kill-after"},
+    "ionice": {"-c", "-n", "-p", "-P", "-u", "--class", "--classdata", "--pid", "--pgid", "--uid"},
+    "watch": {"-n", "-d", "--interval", "--differences"},
+    "stdbuf": {"-i", "-o", "-e", "--input", "--output", "--error"},
+}
+SHELL_KEYWORDS = {"if", "then", "else", "elif", "fi", "do", "done", "while", "until", "{", "}", "!", "case", "esac"}
+INTERPRETERS = re.compile(r"(python[0-9.]*|uv|uvx|pipx|pdm|poetry)")
 SSH_VALUE_FLAGS = set("BbcDEeFIiJLlmOoPpQRSWw")
 SHELLS = {"bash", "sh", "zsh", "dash", "ksh", "script"}
 INFRA_HINT = re.compile(r"(terraform|tofu|kubectl|helm|argocd|flux|ansible|velero|aws|gcloud|az|doctl|qm|pct|pvesh|virsh|ssh)")
@@ -467,6 +505,7 @@ def load_rules() -> list[dict]:
 
 
 def split_segments(cmd: str) -> list[list[str]]:
+    cmd = re.sub(r"\\\r?\n", " ", cmd)
     lex = shlex.shlex(cmd, posix=True, punctuation_chars=";&|()\n")
     lex.whitespace = " \t\r"
     lex.whitespace_split = True
@@ -494,12 +533,13 @@ def strip_wrappers(seg: list[str]) -> list[str]:
     i = 0
     while i < len(seg):
         t = seg[i]
-        if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*=.*", t):
+        if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*=.*", t) or t in SHELL_KEYWORDS:
             i += 1
         elif os.path.basename(t) in WRAPPERS:
+            values = WRAPPER_VALUE_FLAGS.get(os.path.basename(t), set())
             i += 1
             while i < len(seg) and (seg[i].startswith("-") or re.fullmatch(r"[0-9.]+[smhd]?", seg[i])):
-                i += 1
+                i += 2 if seg[i] in values else 1
         else:
             break
     return seg[i:]
@@ -529,9 +569,10 @@ def classify(cmd: str, rules: list[dict], remote: bool = False, depth: int = 0) 
             continue
         tool, args = os.path.basename(seg[0]), seg[1:]
         # idstack anywhere in argv (python3 -u bin/idstack, uv run idstack, ...) is the idstack tool.
-        at = next((j for j, t in enumerate(seg) if os.path.basename(t) == "idstack"), None)
-        if at is not None:
-            tool, args = "idstack", seg[at + 1:]
+        if INTERPRETERS.fullmatch(tool):
+            at = next((j for j, t in enumerate(args[:6]) if os.path.basename(t) == "idstack"), None)
+            if at is not None:
+                tool, args = "idstack", args[at + 1:]
         if tool in SHELLS and "-c" in args:
             i = args.index("-c")
             if i + 1 < len(args):
@@ -548,7 +589,12 @@ def classify(cmd: str, rules: list[dict], remote: bool = False, depth: int = 0) 
                     hits += [dict(h, remote=host) for h in classify(" ".join(rest), rules, True, depth + 1)]
             continue
         for rule in rules:
-            if tool not in rule["tools"] or (rule.get("remote_only") and not remote):
+            on_remote = remote or any(a.split("=")[0] in rule.get("remote_flags", []) for a in args)
+            if tool not in rule["tools"] or (rule.get("remote_only") and not on_remote):
+                continue
+            danger = next((a for a in args if a.split("=")[0] in rule.get("danger_flags", [])), None)
+            if danger:
+                hits.append({"tool": tool, "verb": danger, "reason": rule["reason"], "segment": " ".join(seg)[:300]})
                 continue
             if set(rule.get("safe_flags", [])) & set(args):
                 continue
@@ -601,20 +647,29 @@ def guard_config() -> dict:
 
 
 def cmd_hash(cmd: str) -> str:
-    return hashlib.sha256(" ".join(cmd.split()).encode()).hexdigest()
+    # Exact text: any change, even whitespace, needs a new approval.
+    return hashlib.sha256(cmd.encode()).hexdigest()
+
+
+def update_tokens(fn) -> object:
+    """Run fn(tokens) -> result under an exclusive lock on the allow-once file; fn mutates tokens."""
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    path = STATE_DIR / "guard-allow.json"
+    with (STATE_DIR / "guard-allow.lock").open("w") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        try:
+            tokens = json.loads(path.read_text()) if path.is_file() else {}
+        except ValueError:
+            tokens = {}
+        result = fn(tokens)
+        now = time.time()
+        path.write_text(json.dumps({k: v for k, v in tokens.items() if v > now}))
+        return result
 
 
 def consume_allow(cmd: str) -> bool:
-    path = STATE_DIR / "guard-allow.json"
-    try:
-        tokens = json.loads(path.read_text())
-    except (OSError, ValueError):
-        return False
     h, now = cmd_hash(cmd), time.time()
-    ok = tokens.pop(h, 0) > now
-    tokens = {k: v for k, v in tokens.items() if v > now}
-    path.write_text(json.dumps(tokens))
-    return ok
+    return update_tokens(lambda tokens: tokens.pop(h, 0) > now)
 
 
 def guard_decide(cmd: str, cfg: dict) -> dict:
@@ -623,7 +678,7 @@ def guard_decide(cmd: str, cfg: dict) -> dict:
     if not hits and cfg.get("jev") and os.environ.get("TYPESAFE_API_KEY") and is_ambiguous(cmd):
         battery = load_battery("guard-ambiguous")
         resp, err, _ = jev_ask(battery, {"cmd": cmd, "cwd_hint": os.getcwd()}, os.environ["TYPESAFE_API_KEY"], timeout=5)
-        outcome, probs = jev_outcome(battery, resp.get("answers") if resp else None)
+        outcome, probs = jev_outcome(battery, resp.get("answers") if isinstance(resp, dict) else None)
         if outcome != "clear":
             source = "jev"
             hits = [{"tool": "?", "verb": "?", "reason": f"Jev: {outcome} {probs}", "segment": cmd[:300]}]
@@ -655,7 +710,11 @@ def guard_hook(a) -> int:
     cmd = extract_command(payload)
     if not cmd:
         return EXIT_OK
-    d = guard_decide(cmd, cfg)
+    try:
+        d = guard_decide(cmd, cfg)
+    except Exception as e:  # fail closed: an error in the guard must not let the command through silently
+        d = {"match": True, "source": "error",
+             "hits": [{"tool": "?", "verb": "?", "reason": f"guard error ({type(e).__name__}: {e})", "segment": cmd[:300]}]}
     if not d["match"]:
         return EXIT_OK
     reason = "; ".join(f"{h['tool']} {h['verb']}: {h['reason']}" for h in d["hits"])
@@ -748,11 +807,7 @@ def cmd_guard(a) -> int:
         if not (sys.stdin.isatty() and sys.stdout.isatty()):
             print("error: allow-once must be run by the operator in an interactive terminal", file=sys.stderr)
             return EXIT_FAIL
-        STATE_DIR.mkdir(parents=True, exist_ok=True)
-        path = STATE_DIR / "guard-allow.json"
-        tokens = json.loads(path.read_text()) if path.is_file() else {}
-        tokens[cmd_hash(cmd)] = time.time() + a.ttl
-        path.write_text(json.dumps(tokens))
+        update_tokens(lambda tokens: tokens.__setitem__(cmd_hash(cmd), time.time() + a.ttl))
         emit({"allowed": cmd, "ttl": a.ttl}, a.json, f"allowed once for {a.ttl}s: {cmd}")
         return EXIT_OK
     if a.action in ("install", "uninstall"):
@@ -806,7 +861,8 @@ def main() -> int:
 
     p = sub.add_parser("guard", help="opt-in guard for state-mutating infra commands")
     p.add_argument("action", choices=("hook", "test", "enable", "disable", "status", "allow-once", "install", "uninstall"))
-    p.add_argument("command", nargs="*", help="command for test or allow-once")
+    p.add_argument("command", nargs="*",
+                   help="command for test or allow-once; quote it as one argument, since allow-once matches the exact text")
     p.add_argument("--harness", choices=("claude", "codex", "opencode"), default="claude")
     p.add_argument("--mode", choices=("log", "ask"), default="ask", help="mode for enable")
     p.add_argument("--jev", choices=("on", "off"), help="ask Jev about ambiguous infra commands")

@@ -444,6 +444,18 @@ idstack_checkout() {
   fi
 }
 
+owned_link() {
+  # owned_link <link> <expected target> [manifest]: true when <link> is a symlink idstack made
+  local link=$1 want=$2 manifest=${3:-}
+  [[ -L $link ]] || return 1
+  [[ $(readlink "$link") == "$want" ]] && return 0
+  [[ -n $manifest && -f $manifest ]] || return 1
+  local source
+  source=$(jq_op field source <"$manifest")
+  [[ -n $source && $(readlink "$link") == "$source/"* ]] || return 1
+  { jq_op lines files <"$manifest"; jq_op lines skills <"$manifest"; } | grep -xF "$(basename "$link")" >/dev/null
+}
+
 link_set() {
   # link_set <label> <src dir> <glob> <dest dir>: link matching files, recorded in <dest>/.idstack-install.json
   local label=$1 from=$2 glob=$3 dest=$4 path name linked=()
@@ -455,7 +467,7 @@ link_set() {
   for path in "$from"/$glob; do
     [[ -f $path ]] || continue
     name=$(basename "$path")
-    if [[ -e $dest/$name && ! -L $dest/$name ]]; then
+    if [[ -e $dest/$name || -L $dest/$name ]] && ! owned_link "$dest/$name" "$path" "$dest/.idstack-install.json"; then
       err "$dest/$name exists and is not an idstack link; leaving it alone"
       FAILED=1
       continue
@@ -471,11 +483,11 @@ json.dump({"source": sys.argv[1], "files": names}, open(sys.argv[2], "w"), inden
 
 unlink_set() {
   # unlink_set <dest dir>: remove the links link_set recorded
-  local dest=$1 name
-  [[ -f $dest/.idstack-install.json ]] || return 0
+  local dest=$1 name manifest=$1/.idstack-install.json
+  [[ -f $manifest ]] || return 0
   while IFS= read -r name; do
-    [[ -n $name && -L $dest/$name ]] && run rm "$dest/$name"
-  done < <(jq_op lines files <"$dest/.idstack-install.json")
+    [[ -n $name ]] && owned_link "$dest/$name" "" "$manifest" && run rm "$dest/$name"
+  done < <(jq_op lines files <"$manifest")
   run rm "$dest/.idstack-install.json"
 }
 
@@ -497,7 +509,7 @@ cli_install() {
   log "idstack CLI ($IDSTACK_BIN_DIR)"
   idstack_checkout
   local link=$IDSTACK_BIN_DIR/idstack
-  if [[ -e $link && ! -L $link ]]; then
+  if [[ -e $link || -L $link ]] && ! { [[ -L $link ]] && [[ $(readlink "$link") == */bin/idstack ]]; }; then
     err "$link exists and is not an idstack link; leaving it alone"
     FAILED=1
     return
@@ -510,7 +522,7 @@ cli_install() {
 cli_uninstall() {
   log "idstack CLI"
   local link=$IDSTACK_BIN_DIR/idstack
-  [[ -L $link ]] || { log "  not linked"; return; }
+  [[ -L $link && $(readlink "$link") == */bin/idstack ]] || { log "  no idstack link at $link"; return; }
   # Remove the Codex guard hook first: it calls this binary.
   wants codex && run "$link" guard uninstall --harness codex
   run rm "$link"
@@ -541,7 +553,8 @@ opencode_install() {
     for name in "$src"/skills/*/; do
       [[ -d $name ]] || continue
       name=$(basename "$name")
-      if [[ -e $OPENCODE_SKILLS_DIR/$name && ! -L $OPENCODE_SKILLS_DIR/$name ]]; then
+      if [[ -e $OPENCODE_SKILLS_DIR/$name || -L $OPENCODE_SKILLS_DIR/$name ]] \
+        && ! owned_link "$OPENCODE_SKILLS_DIR/$name" "$src/skills/$name" "$IDSTACK_MANIFEST"; then
         err "$OPENCODE_SKILLS_DIR/$name exists and is not an idstack link; leaving it alone"
         FAILED=1
         continue
@@ -569,7 +582,7 @@ opencode_uninstall() {
   fi
   local name
   while IFS= read -r name; do
-    [[ -n $name && -L $OPENCODE_SKILLS_DIR/$name ]] && run rm "$OPENCODE_SKILLS_DIR/$name"
+    [[ -n $name ]] && owned_link "$OPENCODE_SKILLS_DIR/$name" "" "$IDSTACK_MANIFEST" && run rm "$OPENCODE_SKILLS_DIR/$name"
   done < <(jq_op lines skills <"$IDSTACK_MANIFEST")
   run rm "$IDSTACK_MANIFEST"
 }

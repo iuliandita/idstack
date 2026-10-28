@@ -92,7 +92,8 @@ idstack guard test kubectl delete pod x    # prints the match, runs nothing
 ```
 
 Codex cannot ask, so in `ask` mode it blocks a matching command. After you approve
-it, run `idstack guard allow-once '<command>'` in your own terminal and let the agent rerun it.
+it, run `idstack guard allow-once '<command>'` in your own terminal, quoting the exact text the agent
+used (any difference, even in spaces, needs a new approval), and let the agent rerun it.
 
 ## pstack model files
 
