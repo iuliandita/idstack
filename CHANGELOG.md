@@ -2,9 +2,33 @@
 
 All notable changes to idstack are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions follow semver from v1.0.0;
-v0.x is the prerelease phase, where breaking changes are expected.
+v0.x was the prerelease phase, where breaking changes were expected.
 
 ## [Unreleased]
+
+## [1.0.0] - 2026-10-28
+
+First stable release. idstack runs on Claude Code, Codex, and OpenCode, and under T3 Code on any of
+them, with the router, 21 playbooks, 6 overlays, 4 principles, 3 subagents, the `idstack` CLI, the
+opt-in guard, and per-role model routing that works with any mix of installed harnesses.
+
+### Added
+
+- A stable channel: `main` gets each tagged release, `develop` stays the nightly. `install.sh --ref`
+  picks the branch or tag (default `main`), and the documented install commands pin `main`.
+- CONTRIBUTING describes the release flow from `develop` to `main`.
+
+### Fixed
+
+- `scripts/pstack_models.py --resolve` no longer crashes on `auto` or `inherit-parent` roles.
+- `scripts/eval.py --scenario` with an unknown id exits 2 instead of passing with nothing run.
+
+### Changed
+
+- Removed a pass-through helper in the build generator; generated files are unchanged.
+
+Not yet met from the v1.0 exit criteria in docs/plan.md: a user guide, a review of each playbook
+against real use, and two weeks of daily use without a gate bypass (issue #26).
 
 ## [0.5.0] - 2026-10-28
 
@@ -155,7 +179,8 @@ playbooks yet.
   Code and Codex CLIs, security scanning, release workflow, issue and PR templates, and Dependabot
   for workflow actions and the pinned CLIs.
 
-[Unreleased]: https://github.com/iuliandita/idstack/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/iuliandita/idstack/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/iuliandita/idstack/compare/v0.5.0...v1.0.0
 [0.5.0]: https://github.com/iuliandita/idstack/compare/v0.4.1...v0.5.0
 [0.4.1]: https://github.com/iuliandita/idstack/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/iuliandita/idstack/compare/v0.3.2...v0.4.0

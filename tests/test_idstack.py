@@ -427,6 +427,10 @@ class ModelRoutingTest(unittest.TestCase):
                             if len(picks) == 2 and n > 1:
                                 self.assertNotEqual(picks[0], picks[1], "a panel needs two different models")
 
+    def test_parent_values_resolve_to_parent(self):
+        for value in ("inherit-parent", "auto"):
+            self.assertEqual(pstack_models.resolve(value, "codex", {"codex"}), ["parent"])
+
     def test_full_install_keeps_home_models(self):
         everything = set(self.PROVIDERS)
         cases = [

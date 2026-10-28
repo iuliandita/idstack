@@ -1,6 +1,6 @@
 {
   "name": "idstack",
-  "version": "0.5.0",
+  "version": "1.0.0",
   "description": "Infra, DevOps, and SRE playbooks for coding agents, layered on pstack",
   "author": {
     "name": "iuliandita",

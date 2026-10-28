@@ -21,7 +21,7 @@
 ## Install with the script
 
 ```sh
-git clone https://github.com/iuliandita/idstack.git
+git clone -b main https://github.com/iuliandita/idstack.git
 cd idstack
 ./install.sh --check
 ./install.sh
@@ -33,6 +33,7 @@ cd idstack
 | `--check` | Report what is installed and what is missing. Changes nothing. |
 | `--dry-run` | Print the commands an install would run. Changes nothing. |
 | `--source SRC` | Install idstack from `owner/repo`, a git URL, or a local checkout. Default: `iuliandita/idstack`. |
+| `--ref REF` | Branch or tag for a remote source: `main` (stable, the default), `develop` (nightly), or a tag such as `v1.0.0`. An existing clone keeps its branch. |
 | `--force` | Back up and replace skill folders that share a name with a pstack skill, and pstack model files idstack did not write. |
 | `--no-models` | Leave pstack's per-role model files alone. |
 | `--uninstall` | Remove idstack and the model files it wrote. pstack stays. |
@@ -195,7 +196,7 @@ Claude Code:
 
 ```text
 /plugin marketplace add cursor/plugins
-/plugin marketplace add iuliandita/idstack
+/plugin marketplace add iuliandita/idstack#main
 /plugin install idstack@idstack
 ```
 
@@ -203,7 +204,7 @@ Codex:
 
 ```sh
 npx skills add https://github.com/backnotprop/pstack/tree/<commit> -g -a codex --skill '*' -y
-codex plugin marketplace add iuliandita/idstack
+codex plugin marketplace add iuliandita/idstack --ref main
 codex plugin add idstack@idstack
 ```
 
@@ -225,9 +226,11 @@ Every harness: link `bin/idstack` from the clone into a directory on your PATH, 
   is reinstalled when the pinned commit changes.
 - Claude Code leaves auto-update off for third-party marketplaces. Turn it on in `/plugin`, on the
   marketplaces tab, or update by hand with `claude plugin update idstack@idstack`.
-- Channels: the `develop` branch is the nightly channel, and `/plugin marketplace add
-  iuliandita/idstack` tracks it. Prereleases (`v0.x.y`) are tagged from `develop`. Stable releases
-  (`v1.0.0` and later) are tagged from `main`; pin one with `iuliandita/idstack#main` or a tag.
+- Channels: `main` is stable and gets each tagged release (`v1.0.0` and later); `develop` is the
+  nightly and gets every merge. The script and the commands above use `main`. For the nightly, run
+  the script with `--ref develop`, or add the marketplace as `iuliandita/idstack#develop` (Claude
+  Code) or with `--ref develop` (Codex). Pin a release the same way with its tag, such as `v1.0.0`.
+  Prereleases before 1.0 (`v0.x.y`) were tagged from `develop`.
 
 ## Uninstall
 

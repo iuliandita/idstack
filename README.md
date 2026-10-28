@@ -7,14 +7,14 @@ pstack gives agents a rigorous way to do software work. idstack adds what infra 
 work does not: plan before apply, pin the target before touching it, prove that backups restore,
 and never let a green check stand in for the live state.
 
-Status: pre-alpha. The router, playbooks, principles, subagents, `idstack` CLI, opt-in guard, and
-setup skill ship. Dogfooding on real work and the v1.0 exit criteria are next. See the
-[roadmap](docs/plan.md#15-roadmap).
+Status: stable since v1.0.0. The router, playbooks, principles, subagents, `idstack` CLI, opt-in
+guard, and setup skill ship on Claude Code, Codex, and OpenCode. Releases follow semver; `main` is
+the stable channel and `develop` the nightly. See the [roadmap](docs/plan.md#15-roadmap).
 
 ## Install
 
 ```sh
-git clone https://github.com/iuliandita/idstack.git
+git clone -b main https://github.com/iuliandita/idstack.git
 cd idstack
 ./install.sh --check    # what is installed, what is missing
 ./install.sh            # install pstack (if missing) and idstack on every harness found
@@ -26,13 +26,14 @@ missing, then installs idstack. It also writes pstack's per-role model choices f
 choices are one opinionated default. Each role falls back across Claude, Codex, and OpenCode models,
 so it works with one, two, or all three harnesses; set your own in `~/.config/idstack/models.json`
 ([INSTALL](INSTALL.md#your-own-models)).
-`--harness claude,codex` limits it, `--dry-run` prints the commands without running them.
+`--harness claude,codex` limits it, `--dry-run` prints the commands without running them, and
+`--ref develop` installs the nightly instead of the stable `main`.
 
 Claude Code only, without the clone:
 
 ```text
 /plugin marketplace add cursor/plugins
-/plugin marketplace add iuliandita/idstack
+/plugin marketplace add iuliandita/idstack#main
 /plugin install idstack@idstack
 ```
 

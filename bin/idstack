@@ -607,10 +607,6 @@ def parse_agent(path: Path) -> dict:
     return {"name": meta["name"], "description": meta["description"], "tools": tools, "body": m.group(2).strip() + "\n"}
 
 
-def toml_str(s: str) -> str:
-    return json.dumps(s)
-
-
 def build_outputs() -> dict[Path, str]:
     out: dict[Path, str] = {}
     for src in sorted((ROOT / "agents").glob("*.md")):
@@ -622,15 +618,15 @@ def build_outputs() -> dict[Path, str]:
             body += "\nYou are read-only: never edit files or run a command that changes state.\n"
         out[ROOT / "harness/codex/agents" / f"{ag['name']}.toml"] = (
             f"# {GENERATED.format(src=rel)}\n"
-            f"name = {toml_str(ag['name'])}\n"
-            f"description = {toml_str(ag['description'])}\n"
+            f"name = {json.dumps(ag['name'])}\n"
+            f"description = {json.dumps(ag['description'])}\n"
             f'developer_instructions = """\n{body}"""\n'
         )
         perm = ["permission:", "  edit: deny", "  bash: allow", "  webfetch: deny"] if read_only else []
         out[ROOT / "harness/opencode/agents" / f"{ag['name']}.md"] = "\n".join(
             [
                 "---",
-                f"description: {toml_str(ag['description'])}",
+                f"description: {json.dumps(ag['description'])}",
                 "mode: subagent",
                 *perm,
                 "---",
