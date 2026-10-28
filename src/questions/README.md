@@ -28,7 +28,7 @@ One file per decision point: `<battery>.json`. `idstack judge <battery> <items.j
 - `rule`:
   - `any-above`: `flag` when any answer is above `threshold`, `clear` when all are below it.
   - `any-below`: `flag` when any answer is below `threshold`, `clear` when all are above it.
-  - `rank`: like `any-above`, and items are also printed in descending order of their highest answer.
+  - `rank`: like `any-above`, and items are also printed unsettled first, then in descending order of their highest answer.
 - An answer exactly on the threshold, a missing answer, or a failed call makes the item `unsettled`. Callers treat `unsettled` like `flag`.
 
 ## Labeled cases

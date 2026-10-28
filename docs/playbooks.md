@@ -1,6 +1,6 @@
 # idstack playbook catalog
 
-Status: design specs. The shipped playbooks are in [skills/id-mode/playbooks/](../skills/id-mode/playbooks/), in pstack's format. Where a spec names `idstack plan-summary` or `idstack judge`, the shipped playbooks use the `plan-reader` subagent and optional Jev decision points until the CLI exists.
+Status: design specs. The shipped playbooks are in [skills/id-mode/playbooks/](../skills/id-mode/playbooks/), in pstack's format. The shipped playbooks call `idstack plan-summary` and `idstack judge` where a spec names them, and fall back to `jq` and the `plan-reader` subagent when the CLI is missing.
 
 Conventions used below:
 

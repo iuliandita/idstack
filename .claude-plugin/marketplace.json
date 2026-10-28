@@ -10,7 +10,7 @@
     {
       "name": "idstack",
       "description": "Infra, DevOps, and SRE playbooks for coding agents, layered on pstack",
-      "version": "0.3.1",
+      "version": "0.3.2",
       "source": "./",
       "dependencies": [
         { "name": "pstack", "marketplace": "cursor-plugins" }

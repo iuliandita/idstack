@@ -7,9 +7,10 @@ in a temporary copy of fixtures/infra, and check the commands it ran and its fin
 
 Claude Code runs with user settings excluded and loads only pstack (--pstack-dir) and this
 checkout through --plugin-dir, with the idstack guard in ask mode. Codex uses its installed
-idstack plugin. Every run gets an empty KUBECONFIG and empty AWS config, so nothing reaches a
-real cluster or account. Exit 1 when any scenario fails.
+idstack plugin. Every run gets an empty KUBECONFIG, empty AWS config, and no cloud credential
+variables, so nothing reaches a real cluster or account. Exit 1 when any scenario fails.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -24,32 +25,55 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 HOME = Path.home()
+# Cloud and cluster credentials an agent could pick up from the environment.
+CLOUD_ENV = re.compile(r"(AWS_|AZURE_|ARM_|GOOGLE_|CLOUDSDK_|GCLOUD_|DIGITALOCEAN_|HCLOUD_|OS_|VAULT_|TF_VAR_|KUBE)")
 
 
 def prepare(work: Path) -> dict:
     shutil.copytree(ROOT / "fixtures/infra", work, dirs_exist_ok=True)
     shutil.copytree(ROOT / "fixtures/plans", work / "plans")
     (work / ".kubeconfig").write_text("")
-    env = dict(os.environ)
-    env.update({
-        "KUBECONFIG": str(work / ".kubeconfig"),
-        "AWS_CONFIG_FILE": "/dev/null",
-        "AWS_SHARED_CREDENTIALS_FILE": "/dev/null",
-        "IDSTACK_GUARD_MODE": "ask",
-        "IDSTACK_STATE_DIR": str(work / ".idstack-state"),
-        "IDSTACK_CONFIG_DIR": str(work / ".idstack-config"),
-        "PATH": f"{ROOT / 'bin'}{os.pathsep}{env.get('PATH', '')}",
-    })
+    env = {k: v for k, v in os.environ.items() if not CLOUD_ENV.match(k)}
+    env.update(
+        {
+            "AWS_EC2_METADATA_DISABLED": "true",
+            "KUBECONFIG": str(work / ".kubeconfig"),
+            "AWS_CONFIG_FILE": "/dev/null",
+            "AWS_SHARED_CREDENTIALS_FILE": "/dev/null",
+            "IDSTACK_GUARD_MODE": "ask",
+            "IDSTACK_STATE_DIR": str(work / ".idstack-state"),
+            "IDSTACK_CONFIG_DIR": str(work / ".idstack-config"),
+            "PATH": f"{ROOT / 'bin'}{os.pathsep}{env.get('PATH', '')}",
+        }
+    )
     env.pop("TYPESAFE_API_KEY", None)
     return env
 
 
 def run_claude(task: str, work: Path, env: dict, a) -> tuple[list[str], str, str]:
-    pstack = Path(a.pstack_dir) if a.pstack_dir else max((HOME / ".claude/plugins/cache/cursor-plugins/pstack").glob("*"))
-    cmd = ["claude", "-p", f"/idstack:id-mode {task}", "--output-format", "stream-json", "--verbose",
-           "--setting-sources", "project", "--plugin-dir", str(pstack), "--plugin-dir", str(ROOT),
-           "--permission-mode", "acceptEdits", "--max-budget-usd", str(a.budget),
-           "--allowedTools", "Bash Read Edit Write Glob Grep Skill Agent Task TodoWrite"]
+    pstack = (
+        Path(a.pstack_dir) if a.pstack_dir else max((HOME / ".claude/plugins/cache/cursor-plugins/pstack").glob("*"))
+    )
+    cmd = [
+        "claude",
+        "-p",
+        f"/idstack:id-mode {task}",
+        "--output-format",
+        "stream-json",
+        "--verbose",
+        "--setting-sources",
+        "project",
+        "--plugin-dir",
+        str(pstack),
+        "--plugin-dir",
+        str(ROOT),
+        "--permission-mode",
+        "acceptEdits",
+        "--max-budget-usd",
+        str(a.budget),
+        "--allowedTools",
+        "Bash Read Edit Write Glob Grep Skill Agent Task TodoWrite",
+    ]
     if a.model:
         cmd += ["--model", a.model]
     r = subprocess.run(cmd, cwd=work, env=env, capture_output=True, text=True, timeout=a.timeout)
@@ -69,8 +93,7 @@ def run_claude(task: str, work: Path, env: dict, a) -> tuple[list[str], str, str
 
 
 def run_codex(task: str, work: Path, env: dict, a) -> tuple[list[str], str, str]:
-    cmd = ["codex", "exec", "--json", "--skip-git-repo-check", "--ephemeral", "-s", "workspace-write",
-           "-C", str(work)]
+    cmd = ["codex", "exec", "--json", "--skip-git-repo-check", "--ephemeral", "-s", "workspace-write", "-C", str(work)]
     for kv in a.codex_config:
         cmd += ["-c", kv]
     if a.model:
@@ -95,7 +118,7 @@ def judge(sc: dict, cmds: list[str], reply: str, work: Path) -> list[str]:
     if sc.get("forbid_cmd"):
         bad = [c for c in cmds if re.search(sc["forbid_cmd"], c)]
         if bad:
-            fails.append(f"ran a forbidden command: {bad[0][:200]}")
+            fails.append(f"attempted a forbidden command: {bad[0][:200]}")
     if sc.get("require_cmd") and not any(re.search(sc["require_cmd"], c) for c in cmds):
         fails.append(f"never ran a command matching {sc['require_cmd']}")
     if sc.get("require_reply") and not re.search(sc["require_reply"], reply):
@@ -140,13 +163,24 @@ def main() -> int:
         fails = judge(sc, cmds, reply, work)
         guard_log = work / ".idstack-state/guard.log"
         guard = [json.loads(x) for x in guard_log.read_text().splitlines()] if guard_log.is_file() else []
-        results.append({"id": sc["id"], "pass": not fails, "fails": fails, "commands": cmds,
-                        "guard": guard, "reply": reply[-1500:]})
+        results.append(
+            {
+                "id": sc["id"],
+                "pass": not fails,
+                "fails": fails,
+                "commands": cmds,
+                "guard": guard,
+                "reply": reply[-1500:],
+            }
+        )
         if out:
             (out / f"{a.harness}-{sc['id']}.log").write_text(raw)
-        print(f"{'PASS' if not fails else 'FAIL'}  {a.harness}  {sc['id']}" +
-              "".join(f"\n      {f}" for f in fails) +
-              (f"\n      guard caught: {[g['cmd'][:80] for g in guard]}" if guard else ""), flush=True)
+        print(
+            f"{'PASS' if not fails else 'FAIL'}  {a.harness}  {sc['id']}"
+            + "".join(f"\n      {f}" for f in fails)
+            + (f"\n      guard caught: {[g['cmd'][:80] for g in guard]}" if guard else ""),
+            flush=True,
+        )
         if not a.keep:
             shutil.rmtree(work, ignore_errors=True)
     if out:

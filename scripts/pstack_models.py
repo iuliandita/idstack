@@ -8,6 +8,7 @@ agents -> <parent of $AGENTS_SKILLS_DIR>/pstack-models.md (default ~/.agents), r
 
 Exit codes: 0 ok, 1 failure or (with --check) not current, 2 usage, 3 invalid config.
 """
+
 import argparse
 import json
 import os
@@ -25,10 +26,23 @@ EFFORTS = ("low", "medium", "high", "xhigh", "max")
 CLAUDE_MODELS = ("opus", "sonnet", "haiku", "fable")
 # The role labels pstack's setup-pstack writes, in its order.
 ROLES = (
-    "feature, refactoring", "bug-fix", "perf-issue", "hillclimb", "judgment and prose",
-    "hardest tasks", "how explorer", "how explainer", "why investigators", "why synthesizer",
-    "reflect tooling", "reflect judgment, divergent, synthesizer", "arena runners",
-    "arena cross-judge pool", "swarm workers", "architect runners", "interrogate reviewers",
+    "feature, refactoring",
+    "bug-fix",
+    "perf-issue",
+    "hillclimb",
+    "judgment and prose",
+    "hardest tasks",
+    "how explorer",
+    "how explainer",
+    "why investigators",
+    "why synthesizer",
+    "reflect tooling",
+    "reflect judgment, divergent, synthesizer",
+    "arena runners",
+    "arena cross-judge pool",
+    "swarm workers",
+    "architect runners",
+    "interrogate reviewers",
 )
 
 
@@ -58,10 +72,12 @@ def codex_catalog() -> dict[str, set[str] | None] | None:
     # Signed out, codex lists only the catalog bundled with the CLI, which lags the account's models.
     if catalog(["codex", "login", "status"], lambda out: out) is None:
         return None
-    return catalog(["codex", "debug", "models"], lambda out: {
-        m["slug"]: {e["effort"] for e in m.get("supported_reasoning_levels", [])}
-        for m in json.loads(out)["models"]
-    })
+    return catalog(
+        ["codex", "debug", "models"],
+        lambda out: {
+            m["slug"]: {e["effort"] for e in m.get("supported_reasoning_levels", [])} for m in json.loads(out)["models"]
+        },
+    )
 
 
 def opencode_catalog() -> dict[str, set[str] | None] | None:
@@ -81,7 +97,9 @@ def validate(target: str, roles: dict[str, str], t3: dict) -> list[str]:
     }
     for name, cat in catalogs.items():
         if cat is None:
-            print(f"warning: {name} is not installed or not signed in; its model names were not checked", file=sys.stderr)
+            print(
+                f"warning: {name} is not installed or not signed in; its model names were not checked", file=sys.stderr
+            )
     native = "claude" if target == "claude" else "codex"
 
     def check(role: str, model: str, effort: str, provider: str) -> None:
@@ -105,7 +123,9 @@ def validate(target: str, roles: dict[str, str], t3: dict) -> list[str]:
                 continue
             m = ENTRY.match(entry)
             if not m:
-                errors.append(f"{target}: {role}: {entry!r} is not '<model> <effort> [via <provider> else <model> <effort>]'")
+                errors.append(
+                    f"{target}: {role}: {entry!r} is not '<model> <effort> [via <provider> else <model> <effort>]'"
+                )
                 continue
             model, effort, via, else_model, else_effort = m.groups()
             if via:
@@ -186,7 +206,15 @@ def main() -> int:
             continue
         wanted = render(config[target], config["t3"])
         if args.check:
-            state = "ok" if current == wanted else "absent" if current is None else "outdated" if managed else "not managed by idstack"
+            state = (
+                "ok"
+                if current == wanted
+                else "absent"
+                if current is None
+                else "outdated"
+                if managed
+                else "not managed by idstack"
+            )
             print(f"  {label:<28} {state} ({path})")
             rc |= state != "ok"
             continue
@@ -194,7 +222,10 @@ def main() -> int:
             print(f"  {label}: current")
             continue
         if current is not None and not managed and not args.force:
-            print(f"error: {path} was not written by idstack; rerun with --force to back it up and replace it", file=sys.stderr)
+            print(
+                f"error: {path} was not written by idstack; rerun with --force to back it up and replace it",
+                file=sys.stderr,
+            )
             rc = 1
             continue
         if args.dry_run:

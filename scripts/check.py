@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Repository checks for idstack. Run from anywhere: python3 scripts/check.py [--json]."""
+
 import json
 import re
 import subprocess
@@ -15,7 +16,9 @@ TEXT_SUFFIXES = {".md", ".json", ".yml", ".yaml", ".py", ".sh", ".toml", ".txt",
 def tracked_files() -> list[Path]:
     out = subprocess.run(
         ["git", "ls-files", "-z", "--cached", "--others", "--exclude-standard"],
-        cwd=ROOT, check=True, capture_output=True,
+        cwd=ROOT,
+        check=True,
+        capture_output=True,
     ).stdout.decode()
     return [ROOT / p for p in out.split("\0") if p and (ROOT / p).is_file()]
 
@@ -71,8 +74,10 @@ def check_manifests(findings: list[str]) -> None:
     if len(set(versions.values())) != 1 or None in versions.values():
         findings.append(f"manifest versions differ: {versions}")
 
-    for label, deps in ((".claude-plugin/plugin.json", claude_plugin.get("dependencies", [])),
-                        (".claude-plugin/marketplace.json entry", (claude_entry or {}).get("dependencies", []))):
+    for label, deps in (
+        (".claude-plugin/plugin.json", claude_plugin.get("dependencies", [])),
+        (".claude-plugin/marketplace.json entry", (claude_entry or {}).get("dependencies", [])),
+    ):
         if DEPENDENCY not in deps:
             findings.append(f"{label}: missing dependency {DEPENDENCY}")
     if DEPENDENCY["marketplace"] not in claude_market.get("allowCrossMarketplaceDependenciesOn", []):
@@ -119,15 +124,14 @@ def check_skills(findings: list[str]) -> None:
     for name in sorted(files - listed):
         findings.append(f"skills/id-mode/playbooks/{name}.md: not listed in the router catalog")
 
+    batteries = {p.stem for p in (ROOT / "src/questions").glob("*.json")}
     for path in sorted(router.rglob("*.md")) + sorted((ROOT / "agents").glob("*.md")):
         body = path.read_text()
         for ref in sorted(set(re.findall(r"references/([a-z-]+\.md)", body))):
             if not (router / "references" / ref).exists():
                 findings.append(f"{path.relative_to(ROOT)}: references/{ref} does not exist")
-        batteries = {p.stem for p in (ROOT / "src/questions").glob("*.json")}
-        for battery in sorted(set(re.findall(r"idstack judge ([a-z-]+)", body)) - batteries - {"-"}):
-            if not battery.startswith("<"):
-                findings.append(f"{path.relative_to(ROOT)}: idstack judge {battery}: no src/questions/{battery}.json")
+        for battery in sorted(set(re.findall(r"idstack judge ([a-z][a-z-]*)", body)) - batteries):
+            findings.append(f"{path.relative_to(ROOT)}: idstack judge {battery}: no src/questions/{battery}.json")
 
 
 def check_links(files: list[Path], findings: list[str]) -> None:

@@ -4,6 +4,27 @@ All notable changes to idstack are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions follow semver from v1.0.0;
 v0.x is the prerelease phase, where breaking changes are expected.
 
+## [Unreleased]
+
+## [0.3.2] - 2026-10-28
+
+### Fixed
+
+- Grant predicates check the attributes of created resources, so a new instance with an IAM
+  profile or security groups needs `--allow-iam` or `--allow-network`. Inline network rule blocks
+  count as network changes.
+- `plan-summary` diffs replace values Terraform marks sensitive with `(sensitive)`.
+- Guard: `bash -lc` and other combined shell flags are unwrapped; current Terragrunt forms
+  (`run --all apply`, `--working-dir`) match. A hook that fails (unwritable state, corrupt
+  `guard.json`) now asks or blocks instead of letting the command through.
+- `install.sh --check` reports links that went missing behind an existing install record.
+- `scripts/eval.py` drops cloud credential variables from the agent's environment.
+
+### Changed
+
+- Docs describe the shipped CLI, installer, and guard; docs/plan.md reads as a design record.
+- Python is formatted and linted with ruff (`ruff.toml`); CI runs it.
+
 ## [0.3.1] - 2026-10-28
 
 ### Fixed
@@ -83,3 +104,10 @@ playbooks yet.
 - Repository checks (`scripts/check.py`), CI with an isolated install smoke test on pinned Claude
   Code and Codex CLIs, security scanning, release workflow, issue and PR templates, and Dependabot
   for workflow actions and the pinned CLIs.
+
+[Unreleased]: https://github.com/iuliandita/idstack/compare/v0.3.2...HEAD
+[0.3.2]: https://github.com/iuliandita/idstack/compare/v0.3.1...v0.3.2
+[0.3.1]: https://github.com/iuliandita/idstack/compare/v0.3.0...v0.3.1
+[0.3.0]: https://github.com/iuliandita/idstack/compare/v0.2.0...v0.3.0
+[0.2.0]: https://github.com/iuliandita/idstack/compare/v0.1.0...v0.2.0
+[0.1.0]: https://github.com/iuliandita/idstack/releases/tag/v0.1.0

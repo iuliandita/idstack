@@ -16,8 +16,14 @@ any_verb_regex = "^(allow-once|enable|disable|install|uninstall)$"
 reason = "changes the guard itself; only the operator does this"
 
 [[rule]]
-tools = ["terraform", "tofu", "terragrunt"]
-verbs = ["apply", "destroy", "import", "taint", "untaint", "force-unlock", "state rm", "state mv", "state push", "state replace-provider", "workspace delete", "run-all apply", "run-all destroy"]
+tools = ["terraform", "tofu"]
+verbs = ["apply", "destroy", "import", "taint", "untaint", "force-unlock", "state rm", "state mv", "state push", "state replace-provider", "workspace delete"]
+reason = "changes infrastructure or state"
+
+# Terragrunt nests the verb (run --all apply, run -- apply, run-all destroy) after its own flags.
+[[rule]]
+tools = ["terragrunt"]
+any_verb_regex = "^(apply|destroy|import|taint|untaint|force-unlock|rm|mv|push|replace-provider|delete)$"
 reason = "changes infrastructure or state"
 
 [[rule]]
