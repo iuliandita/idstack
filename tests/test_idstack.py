@@ -92,6 +92,12 @@ class GuardTest(unittest.TestCase):
             "idstack guard status": False,
             "idstack guard allow-once kubectl delete pod x": True,
             "python3 bin/idstack guard disable": True,
+            "python3 -u bin/idstack guard disable": True,
+            "idstack guard --mode log enable": True,
+            "idstack --json guard --ttl 600 allow-once kubectl get pods": True,
+            "uv run idstack guard uninstall --harness codex": True,
+            "script -q -c 'idstack guard disable' /dev/null": True,
+            "idstack guard test kubectl get pods": False,
         }
         for cmd, match in cases.items():
             with self.subTest(cmd):

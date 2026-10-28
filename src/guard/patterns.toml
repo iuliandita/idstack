@@ -4,11 +4,13 @@
 # `value_flags` take a separate value (`-n demo`), so the value is skipped too.
 # `safe_flags`: any of these present makes the command read-only for this tool.
 # `any_verb_regex`: matched against every positional argument instead of the first ones.
+# `requires`: a positional argument that must also be present (for example a subcommand).
 # The guard is a seatbelt, not a lock: aliases, scripts, and quoting can hide a verb.
 
 [[rule]]
 tools = ["idstack"]
-verbs = ["guard allow-once", "guard enable", "guard disable", "guard install", "guard uninstall"]
+requires = "guard"
+any_verb_regex = "^(allow-once|enable|disable|install|uninstall)$"
 reason = "changes the guard itself; only the operator does this"
 
 [[rule]]

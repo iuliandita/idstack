@@ -456,9 +456,9 @@ def cmd_build(a) -> int:
 
 # --- guard ----------------------------------------------------------------------------------
 
-WRAPPERS = {"sudo", "doas", "env", "nice", "nohup", "time", "timeout", "command", "exec", "stdbuf", "ionice", "watch"}
+WRAPPERS = {"sudo", "doas", "env", "nice", "nohup", "time", "timeout", "command", "exec", "stdbuf", "ionice", "watch", "unbuffer"}
 SSH_VALUE_FLAGS = set("BbcDEeFIiJLlmOoPpQRSWw")
-SHELLS = {"bash", "sh", "zsh", "dash", "ksh"}
+SHELLS = {"bash", "sh", "zsh", "dash", "ksh", "script"}
 INFRA_HINT = re.compile(r"(terraform|tofu|kubectl|helm|argocd|flux|ansible|velero|aws|gcloud|az|doctl|qm|pct|pvesh|virsh|ssh)")
 
 
@@ -528,8 +528,10 @@ def classify(cmd: str, rules: list[dict], remote: bool = False, depth: int = 0) 
         if not seg:
             continue
         tool, args = os.path.basename(seg[0]), seg[1:]
-        if re.fullmatch(r"python[0-9.]*", tool) and args and os.path.basename(args[0]) == "idstack":
-            tool, args = "idstack", args[1:]
+        # idstack anywhere in argv (python3 -u bin/idstack, uv run idstack, ...) is the idstack tool.
+        at = next((j for j, t in enumerate(seg) if os.path.basename(t) == "idstack"), None)
+        if at is not None:
+            tool, args = "idstack", seg[at + 1:]
         if tool in SHELLS and "-c" in args:
             i = args.index("-c")
             if i + 1 < len(args):
@@ -555,6 +557,8 @@ def classify(cmd: str, rules: list[dict], remote: bool = False, depth: int = 0) 
                 if mod in rule["safe_modules"]:
                     continue
             pos = positionals(args, set(rule.get("value_flags", [])))
+            if rule.get("requires") and rule["requires"] not in pos:
+                continue
             matched = None
             if rule.get("any_verb_regex"):
                 rx = re.compile(rule["any_verb_regex"])
