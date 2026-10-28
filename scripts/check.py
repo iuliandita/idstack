@@ -124,8 +124,10 @@ def check_skills(findings: list[str]) -> None:
         for ref in sorted(set(re.findall(r"references/([a-z-]+\.md)", body))):
             if not (router / "references" / ref).exists():
                 findings.append(f"{path.relative_to(ROOT)}: references/{ref} does not exist")
-        if re.search(r"idstack (plan-summary|judge)", body):
-            findings.append(f"{path.relative_to(ROOT)}: names an idstack CLI command that does not exist yet")
+        batteries = {p.stem for p in (ROOT / "src/questions").glob("*.json")}
+        for battery in sorted(set(re.findall(r"idstack judge ([a-z-]+)", body)) - batteries - {"-"}):
+            if not battery.startswith("<"):
+                findings.append(f"{path.relative_to(ROOT)}: idstack judge {battery}: no src/questions/{battery}.json")
 
 
 def check_links(files: list[Path], findings: list[str]) -> None:

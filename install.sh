@@ -11,6 +11,10 @@ OPENCODE_SKILLS_DIR="${OPENCODE_SKILLS_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/op
 IDSTACK_CACHE_DIR="${IDSTACK_CACHE_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/idstack}"
 PSTACK_MANIFEST="$AGENTS_SKILLS_DIR/.pstack-install.json"
 IDSTACK_MANIFEST="$OPENCODE_SKILLS_DIR/.idstack-install.json"
+IDSTACK_BIN_DIR="${IDSTACK_BIN_DIR:-$HOME/.local/bin}"
+CODEX_AGENTS_DIR="${CODEX_HOME:-$HOME/.codex}/agents"
+OPENCODE_AGENTS_DIR="${OPENCODE_AGENTS_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/opencode/agents}"
+IDSTACK_SRC=""
 
 SUPPORTED=(claude codex opencode)
 HARNESSES=()
@@ -57,7 +61,9 @@ Environment:
   CLAUDE_CONFIG_DIR, CODEX_HOME   honored by the harness CLIs
   AGENTS_SKILLS_DIR               shared skills dir (default ~/.agents/skills)
   OPENCODE_SKILLS_DIR             OpenCode skills dir (default ~/.config/opencode/skills)
-  IDSTACK_CACHE_DIR               clone of idstack for OpenCode (default ~/.local/share/idstack)
+  IDSTACK_CACHE_DIR               clone of idstack for the CLI and OpenCode (default ~/.local/share/idstack)
+  IDSTACK_BIN_DIR                 where the idstack CLI is linked (default ~/.local/bin)
+  OPENCODE_AGENTS_DIR             OpenCode agents dir (default ~/.config/opencode/agents)
 
 Exit codes:
   0  done, or (with --check) everything is installed
@@ -280,6 +286,7 @@ codex_check() {
   else
     status "idstack@idstack" "$state"
   fi
+  check_set "agents in $CODEX_AGENTS_DIR" "$CODEX_AGENTS_DIR"
 }
 
 codex_install() {
@@ -302,6 +309,9 @@ codex_install() {
     err "idstack is not enabled in Codex after install"
     FAILED=1
   fi
+  # Codex plugins cannot ship agents, so they are linked into the user agents dir.
+  idstack_checkout
+  link_set agents "$IDSTACK_SRC/harness/codex/agents" "*.toml" "$CODEX_AGENTS_DIR"
 }
 
 codex_uninstall() {
@@ -311,6 +321,7 @@ codex_uninstall() {
   else
     log "  idstack not installed"
   fi
+  unlink_set "$CODEX_AGENTS_DIR"
 }
 
 # ---------- pstack mirror (Codex and OpenCode) ----------
@@ -415,25 +426,94 @@ json.dump({"source": sys.argv[1], "commit": sys.argv[2], "skills": names}, open(
 # ---------- OpenCode ----------
 
 idstack_checkout() {
-  # prints a local path holding the idstack source
+  # sets IDSTACK_SRC to a local path holding the idstack source, fetching it once per run
+  [[ -n $IDSTACK_SRC ]] && return
   if is_local_source; then
-    printf '%s\n' "$SOURCE"
+    IDSTACK_SRC=$SOURCE
     return
   fi
   local url=$SOURCE
   [[ $url == */* && $url != *://* && $url != git@* ]] && url="https://github.com/$url.git"
-  local dir="$IDSTACK_CACHE_DIR/src"
-  if [[ $MODE == dry-run ]]; then
-    printf '%s\n' "$dir"
-    return
-  fi
-  if [[ -d $dir/.git ]]; then
-    git -C "$dir" pull -q --ff-only
+  IDSTACK_SRC="$IDSTACK_CACHE_DIR/src"
+  [[ $MODE == dry-run ]] && return
+  if [[ -d $IDSTACK_SRC/.git ]]; then
+    git -C "$IDSTACK_SRC" pull -q --ff-only
   else
     mkdir -p "$IDSTACK_CACHE_DIR"
-    git clone -q "$url" "$dir"
+    git clone -q "$url" "$IDSTACK_SRC"
   fi
-  printf '%s\n' "$dir"
+}
+
+link_set() {
+  # link_set <label> <src dir> <glob> <dest dir>: link matching files, recorded in <dest>/.idstack-install.json
+  local label=$1 from=$2 glob=$3 dest=$4 path name linked=()
+  if [[ $MODE == dry-run ]]; then
+    log "would link $from/$glob into $dest"
+    return
+  fi
+  mkdir -p "$dest"
+  for path in "$from"/$glob; do
+    [[ -f $path ]] || continue
+    name=$(basename "$path")
+    if [[ -e $dest/$name && ! -L $dest/$name ]]; then
+      err "$dest/$name exists and is not an idstack link; leaving it alone"
+      FAILED=1
+      continue
+    fi
+    ln -sfn "$path" "$dest/$name"
+    linked+=("$name")
+  done
+  printf '%s\n' "${linked[@]}" | python3 -I -c 'import json, sys
+names = [l for l in sys.stdin.read().splitlines() if l]
+json.dump({"source": sys.argv[1], "files": names}, open(sys.argv[2], "w"), indent=2)' "$from" "$dest/.idstack-install.json"
+  log "  linked ${#linked[@]} $label into $dest"
+}
+
+unlink_set() {
+  # unlink_set <dest dir>: remove the links link_set recorded
+  local dest=$1 name
+  [[ -f $dest/.idstack-install.json ]] || return 0
+  while IFS= read -r name; do
+    [[ -n $name && -L $dest/$name ]] && run rm "$dest/$name"
+  done < <(jq_op lines files <"$dest/.idstack-install.json")
+  run rm "$dest/.idstack-install.json"
+}
+
+check_set() {
+  # check_set <label> <dest dir>
+  if [[ -f $2/.idstack-install.json ]]; then status "$1" ok; else status "$1" absent; fi
+}
+
+cli_check() {
+  log "idstack CLI"
+  if [[ -L $IDSTACK_BIN_DIR/idstack && -x $IDSTACK_BIN_DIR/idstack ]]; then
+    status "$IDSTACK_BIN_DIR/idstack" ok
+  else
+    status "$IDSTACK_BIN_DIR/idstack" absent
+  fi
+}
+
+cli_install() {
+  log "idstack CLI ($IDSTACK_BIN_DIR)"
+  idstack_checkout
+  local link=$IDSTACK_BIN_DIR/idstack
+  if [[ -e $link && ! -L $link ]]; then
+    err "$link exists and is not an idstack link; leaving it alone"
+    FAILED=1
+    return
+  fi
+  run mkdir -p "$IDSTACK_BIN_DIR"
+  run ln -sfn "$IDSTACK_SRC/bin/idstack" "$link"
+  case ":$PATH:" in *":$IDSTACK_BIN_DIR:"*) ;; *) warn "$IDSTACK_BIN_DIR is not on PATH" ;; esac
+}
+
+cli_uninstall() {
+  log "idstack CLI"
+  local link=$IDSTACK_BIN_DIR/idstack
+  [[ -L $link ]] || { log "  not linked"; return; }
+  # Remove the Codex guard hook first: it calls this binary.
+  wants codex && run "$link" guard uninstall --harness codex
+  run rm "$link"
 }
 
 opencode_check() {
@@ -443,12 +523,15 @@ opencode_check() {
   else
     status "idstack in $OPENCODE_SKILLS_DIR" absent
   fi
+  check_set "agents in $OPENCODE_AGENTS_DIR" "$OPENCODE_AGENTS_DIR"
 }
 
 opencode_install() {
   log "OpenCode ($OPENCODE_SKILLS_DIR)"
   local src name linked=()
-  src=$(idstack_checkout)
+  idstack_checkout
+  src=$IDSTACK_SRC
+  link_set agents "$src/harness/opencode/agents" "*.md" "$OPENCODE_AGENTS_DIR"
   if [[ $MODE == dry-run ]]; then
     log "would link each skill folder under $src/skills into $OPENCODE_SKILLS_DIR"
     return
@@ -479,6 +562,7 @@ json.dump({"source": sys.argv[1], "skills": names}, open(sys.argv[2], "w"), inde
 
 opencode_uninstall() {
   log "OpenCode"
+  unlink_set "$OPENCODE_AGENTS_DIR"
   if [[ ! -f $IDSTACK_MANIFEST ]]; then
     log "  idstack not installed"
     return
@@ -527,6 +611,7 @@ main() {
       fi
       wants codex && codex_check
       wants opencode && opencode_check
+      cli_check
       models_step --check || MISSING=1
       if [[ $MISSING -ne 0 ]]; then
         log "Something is missing. Run install.sh to fix it."
@@ -539,6 +624,7 @@ main() {
       if wants codex || wants opencode; then pstack_install; fi
       wants codex && codex_install
       wants opencode && opencode_install
+      cli_install
       if [[ $MODE == dry-run ]]; then models_step --dry-run || FAILED=1; else models_step || FAILED=1; fi
       if [[ $FAILED -ne 0 ]]; then
         err "install finished with errors"
@@ -547,6 +633,7 @@ main() {
       log "Done. Restart running agent sessions to load the plugins."
       ;;
     uninstall)
+      cli_uninstall
       wants claude && claude_uninstall
       wants codex && codex_uninstall
       wants opencode && opencode_uninstall

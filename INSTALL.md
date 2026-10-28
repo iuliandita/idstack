@@ -68,13 +68,31 @@ If `~/.agents/skills/poteto-mode` already exists and the script did not install 
 leaves it alone and reports it as installed outside the script.
 
 **Codex: idstack.** Adds this repo as the `idstack` marketplace and runs
-`codex plugin add idstack@idstack`.
+`codex plugin add idstack@idstack`. Codex plugins cannot ship subagents, so the script links
+`harness/codex/agents/*.toml` into `~/.codex/agents` and records them in
+`~/.codex/agents/.idstack-install.json`.
 
 **OpenCode: idstack.** OpenCode has no plugin marketplace for skills. The script clones idstack to
 `~/.local/share/idstack/src` (or uses the local checkout given with `--source`) and links each
 folder under `skills/` into `~/.config/opencode/skills`. It writes the list of links to
 `~/.config/opencode/skills/.idstack-install.json`. It never replaces a folder that is not one of its
-links.
+links. It links the subagents in `harness/opencode/agents` into `~/.config/opencode/agents` the
+same way.
+
+**Every harness: the CLI.** The script links `~/.local/bin/idstack` to `bin/idstack` in the clone
+(the `--source` checkout, or `~/.local/share/idstack/src`). Claude Code also puts the plugin's own
+`bin/` on the Bash PATH. The CLI needs Python 3.11 or later and nothing else.
+
+**The guard is not installed.** It is opt-in: run `/idstack:setup`, or by hand:
+
+```sh
+idstack guard enable --mode ask            # or --mode log; Claude Code picks this up through the plugin hook
+idstack guard install --harness codex      # then trust the hook with /hooks in Codex
+idstack guard test kubectl delete pod x    # prints the match, runs nothing
+```
+
+Codex cannot ask, so in `ask` mode it blocks a matching command. After you approve
+it, run `idstack guard allow-once '<command>'` in your own terminal and let the agent rerun it.
 
 ## pstack model files
 
@@ -165,7 +183,8 @@ OpenCode: install pstack the same way with `-a opencode`, then link the folders 
 ./install.sh --uninstall
 ```
 
-This removes idstack and the model files it wrote from each harness, and leaves pstack in place. To remove pstack too:
+This removes idstack, its subagent links, the CLI link, the Codex guard hook if it installed one, and the model files it wrote, and leaves pstack in place. Guard settings in
+`~/.config/idstack` and logs in `~/.local/state/idstack` stay; delete them by hand if you want. To remove pstack too:
 
 - Claude Code: `claude plugin uninstall pstack@cursor-plugins`.
 - Codex and OpenCode: delete the folders listed in `~/.agents/skills/.pstack-install.json`, then
@@ -189,9 +208,15 @@ This removes idstack and the model files it wrote from each harness, and leaves 
 | `CODEX_HOME` | `~/.codex` | Read by the `codex` CLI. |
 | `AGENTS_SKILLS_DIR` | `~/.agents/skills` | Where pstack goes for Codex and OpenCode. |
 | `OPENCODE_SKILLS_DIR` | `~/.config/opencode/skills` | Where idstack skills are linked for OpenCode. |
-| `IDSTACK_CACHE_DIR` | `~/.local/share/idstack` | The idstack clone OpenCode links point into. |
+| `IDSTACK_CACHE_DIR` | `~/.local/share/idstack` | The idstack clone OpenCode links and the CLI link point into. |
+| `IDSTACK_BIN_DIR` | `~/.local/bin` | Where the `idstack` CLI is linked. |
+| `OPENCODE_AGENTS_DIR` | `~/.config/opencode/agents` | Where idstack subagents are linked for OpenCode. |
 
-Pointing all five at a temporary directory gives an isolated install that touches nothing else,
+The CLI itself reads `IDSTACK_CONFIG_DIR` (default `~/.config/idstack`), `IDSTACK_STATE_DIR`
+(default `~/.local/state/idstack`), and `IDSTACK_GUARD_MODE` (`off`, `log`, or `ask`, overriding
+the config file).
+
+Pointing all of the installer's variables at a temporary directory gives an isolated install that touches nothing else,
 which is how CI tests the script.
 
 | Exit code | Meaning |

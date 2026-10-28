@@ -1,0 +1,95 @@
+# idstack guard rules: state-mutating verbs for infra CLIs.
+# A command matches a rule when its tool (basename) is in `tools` and its first one or two
+# positional arguments, after skipping flags, start with an entry in `verbs`.
+# `value_flags` take a separate value (`-n demo`), so the value is skipped too.
+# `safe_flags`: any of these present makes the command read-only for this tool.
+# `any_verb_regex`: matched against every positional argument instead of the first ones.
+# The guard is a seatbelt, not a lock: aliases, scripts, and quoting can hide a verb.
+
+[[rule]]
+tools = ["terraform", "tofu", "terragrunt"]
+verbs = ["apply", "destroy", "import", "taint", "untaint", "force-unlock", "state rm", "state mv", "state push", "state replace-provider", "workspace delete", "run-all apply", "run-all destroy"]
+reason = "changes infrastructure or state"
+
+[[rule]]
+tools = ["kubectl", "oc"]
+value_flags = ["-n", "--namespace", "--context", "--kubeconfig", "--cluster", "--user", "-s", "--server", "--as", "--token"]
+verbs = ["apply", "create", "delete", "patch", "replace", "scale", "autoscale", "drain", "cordon", "uncordon", "edit", "label", "annotate", "taint", "rollout restart", "rollout undo", "rollout pause", "rollout resume", "set", "expose", "run", "exec", "cp"]
+reason = "changes cluster state"
+
+[[rule]]
+tools = ["helm"]
+value_flags = ["-n", "--namespace", "--kube-context", "--kubeconfig"]
+verbs = ["install", "upgrade", "uninstall", "delete", "rollback", "plugin install", "repo remove"]
+reason = "changes a Helm release"
+
+[[rule]]
+tools = ["argocd"]
+value_flags = ["--server", "--auth-token", "--argocd-context", "--config"]
+verbs = ["app sync", "app delete", "app rollback", "app set", "app unset", "app create", "app patch", "app terminate-op", "proj delete", "cluster rm", "repo rm"]
+reason = "changes ArgoCD application state"
+
+[[rule]]
+tools = ["flux"]
+value_flags = ["-n", "--namespace", "--context", "--kubeconfig"]
+verbs = ["reconcile", "suspend", "resume", "delete", "create", "bootstrap", "uninstall"]
+reason = "changes Flux reconciliation"
+
+[[rule]]
+tools = ["ansible-playbook"]
+safe_flags = ["--check", "-C", "--syntax-check", "--list-tasks", "--list-hosts", "--list-tags"]
+verbs = [""]
+reason = "runs a play without --check"
+
+[[rule]]
+tools = ["ansible"]
+safe_flags = ["--check", "-C", "--list-hosts"]
+safe_modules = ["ping", "setup", "debug", "stat", "ansible.builtin.ping", "ansible.builtin.setup", "ansible.builtin.debug", "ansible.builtin.stat", "ansible.builtin.package_facts", "ansible.builtin.service_facts"]
+verbs = [""]
+reason = "runs an ad-hoc module that can change hosts"
+
+[[rule]]
+tools = ["velero"]
+value_flags = ["-n", "--namespace", "--kubecontext", "--kubeconfig"]
+verbs = ["restore create", "delete", "backup delete", "schedule delete", "restore delete"]
+reason = "restores or deletes backups"
+
+[[rule]]
+tools = ["qm", "pct"]
+verbs = ["destroy", "stop", "shutdown", "reboot", "reset", "rollback", "delsnapshot", "migrate", "set", "resize", "move-disk", "move-volume"]
+reason = "changes a Proxmox guest"
+
+[[rule]]
+tools = ["pvesh"]
+verbs = ["create", "set", "delete"]
+reason = "writes to the Proxmox API"
+
+[[rule]]
+tools = ["virsh"]
+value_flags = ["-c", "--connect"]
+verbs = ["destroy", "undefine", "shutdown", "reboot", "reset", "snapshot-delete", "snapshot-revert", "vol-delete", "pool-destroy", "pool-delete"]
+reason = "changes a libvirt guest or storage"
+
+[[rule]]
+tools = ["aws"]
+value_flags = ["--profile", "--region", "--output", "--endpoint-url", "--query", "--color"]
+any_verb_regex = "^(delete|terminate|destroy|remove|deregister|revoke|stop|reboot|disable|detach|disassociate|rb|rm)(-|$)"
+reason = "deletes or stops cloud resources"
+
+[[rule]]
+tools = ["gcloud", "az", "doctl", "hcloud", "linode-cli", "scw", "oci"]
+value_flags = ["--project", "--format", "--account", "--subscription", "--context", "--region", "--zone"]
+any_verb_regex = "^(delete|destroy|remove|rm|terminate|stop|reset|deallocate|purge)$"
+reason = "deletes or stops cloud resources"
+
+[[rule]]
+tools = ["systemctl"]
+remote_only = true
+verbs = ["restart", "stop", "disable", "mask", "kill", "reboot", "poweroff", "halt", "isolate"]
+reason = "changes a service on a remote host"
+
+[[rule]]
+tools = ["reboot", "shutdown", "poweroff", "halt"]
+remote_only = true
+verbs = [""]
+reason = "restarts or stops a remote host"

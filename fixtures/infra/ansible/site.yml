@@ -1,0 +1,9 @@
+- name: Configure web hosts
+  hosts: web
+  become: true
+  tasks:
+    - name: Set the nginx worker count
+      ansible.builtin.lineinfile:
+        path: /etc/nginx/nginx.conf
+        regexp: '^worker_processes'
+        line: 'worker_processes 4;'

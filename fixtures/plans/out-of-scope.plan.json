@@ -1,0 +1,49 @@
+{
+  "format_version": "1.2",
+  "terraform_version": "1.9.8",
+  "resource_changes": [
+    {
+      "address": "module.web.aws_instance.app",
+      "mode": "managed",
+      "type": "aws_instance",
+      "name": "app",
+      "provider_name": "registry.terraform.io/hashicorp/aws",
+      "change": {
+        "actions": [
+          "update"
+        ],
+        "before": {
+          "tags": {
+            "v": "1"
+          }
+        },
+        "after": {
+          "tags": {
+            "v": "2"
+          }
+        },
+        "after_unknown": {}
+      }
+    },
+    {
+      "address": "module.billing.aws_lambda_function.invoice",
+      "mode": "managed",
+      "type": "aws_lambda_function",
+      "name": "invoice",
+      "provider_name": "registry.terraform.io/hashicorp/aws",
+      "change": {
+        "actions": [
+          "update"
+        ],
+        "before": {
+          "memory_size": 256
+        },
+        "after": {
+          "memory_size": 512
+        },
+        "after_unknown": {}
+      }
+    }
+  ],
+  "errored": false
+}

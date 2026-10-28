@@ -9,7 +9,7 @@ For user-visible impact that needs coordination: declare, mitigate, communicate,
 3. Run `live-diagnosis` for the cause, in parallel with mitigation.
 4. **Gate:** each mitigation (rollback, failover, scale, restart). After it, hold the symptom query below its threshold for an agreed period before calling the incident mitigated. Log each gate and answer.
 5. Draft, never send: a technical update, a short non-technical summary, and an external message for customers or vendors when needed. Use numbers over adjectives. Do not overstate what was done or verified. Label each claim verified or inferred.
-   Jev decision point (optional): per claim in a draft message, ask "supported by the evidence?". Any claim below 0.7 is flagged for rewording before the operator sends. Jev never clears a draft.
+   Jev decision point (optional): `idstack judge outgoing-claims <claims.json>`, each item a claim with its evidence. Any `flag` or `unsettled` claim (supported below 0.7) is flagged for rewording before the operator sends. Jev never clears a draft.
 6. Have a second model from another family check external drafts against the timeline.
 7. **Gate:** sending any message. Show the final text and the recipients, then stop. Approval covers that text only.
 8. Write a postmortem when the trigger is met (user-visible downtime, data loss, manual intervention, monitoring missed it). Cover impact, timeline, contributing causes, what went well, and action items.

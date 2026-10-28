@@ -10,11 +10,11 @@ For a Terraform or OpenTofu change, from edit to verified apply. Load **terrafor
 4. Make the change. Prefer `moved`, `import`, and `removed` blocks (with `destroy = false` when the real resource stays) over state commands, because they show up in the plan.
 5. Static checks: `fmt -check`, `validate`, and the repo's linters and scanners (tflint, trivy, checkov). Fix new findings or record why not.
 6. Plan to a file: `plan -out=<name>.tfplan`, then `show -json <name>.tfplan > plan.json`. Use the repo's lock convention on shared state.
-7. Summarize the plan with `plan-reader`: counts by action, every delete and replace, changes to stateful, IAM, and network resources, and every address outside the intended scope. Anything unexpected sends you back to step 4.
-   Jev decision point (optional): per changed resource, ask "holds persistent data?" and "widens IAM permissions?". Any answer above 0.3 fails a predicate grant and moves plan reading to the `hardest tasks` model. Network exposure is checked in code from the plan, not by Jev.
+7. Summarize the plan: `idstack plan-summary plan.json --scope '<address glob>'` gives counts by action, every delete and replace, stateful, IAM, and network changes, and addresses outside the scope. Hand it to `plan-reader` for the review summary: counts by action, every delete and replace, changes to stateful, IAM, and network resources, and every address outside the intended scope. Anything unexpected sends you back to step 4.
+   Jev decision point (optional): `idstack plan-summary plan.json --json | jq '.changes'` into `idstack judge plan-reading -`. Any `flag` or `unsettled` resource (holds persistent data, or widens IAM, above 0.3) fails a predicate grant and moves plan reading to the `hardest tasks` model. Network exposure is checked in code from the plan, not by Jev.
 8. For repos grouped by tenant or risk, split into targeted plans per group, one file each, lowest risk first.
 9. Run **Opening a PR** with the plan summary in the body. Merging does not apply unless step 1 found that it does; if it does, the merge is the gate in step 10.
-10. **Gate:** apply the saved plan file and nothing else. A predicate grant passes this gate only when its check against `plan.json` passes and is logged.
+10. **Gate:** apply the saved plan file and nothing else. A predicate grant passes this gate only when `idstack plan-summary plan.json --scope ... --predicate` exits 0 against the reviewed `plan.json`, and its output is logged.
 11. Re-plan after the apply. Expect no changes. Anything else is drift or a partial apply: stop and report it.
 12. Run the gate's verification query with `change-verifier` and log the result.
 
