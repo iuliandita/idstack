@@ -18,17 +18,22 @@ _loader.exec_module(idstack)
 
 
 def rc(address, rtype, actions, before=None, after=None):
-    return {"address": address, "type": rtype,
-            "change": {"actions": actions, "before": before, "after": after, "after_unknown": {}}}
+    return {
+        "address": address,
+        "type": rtype,
+        "change": {"actions": actions, "before": before, "after": after, "after_unknown": {}},
+    }
 
 
-PLAN = {"resource_changes": [
-    rc("aws_instance.web", "aws_instance", ["update"], {"ami": "a"}, {"ami": "b"}),
-    rc("aws_s3_bucket.logs", "aws_s3_bucket", ["create"], None, {"bucket": "logs"}),
-    rc("aws_iam_role_policy.app", "aws_iam_role_policy", ["update"], {"policy": "x"}, {"policy": "y"}),
-    rc("aws_security_group.web", "aws_security_group", ["no-op"], {}, {}),
-    rc("aws_db_instance.main", "aws_db_instance", ["delete", "create"], {"engine": "pg"}, {"engine": "pg"}),
-]}
+PLAN = {
+    "resource_changes": [
+        rc("aws_instance.web", "aws_instance", ["update"], {"ami": "a"}, {"ami": "b"}),
+        rc("aws_s3_bucket.logs", "aws_s3_bucket", ["create"], None, {"bucket": "logs"}),
+        rc("aws_iam_role_policy.app", "aws_iam_role_policy", ["update"], {"policy": "x"}, {"policy": "y"}),
+        rc("aws_security_group.web", "aws_security_group", ["no-op"], {}, {}),
+        rc("aws_db_instance.main", "aws_db_instance", ["delete", "create"], {"engine": "pg"}, {"engine": "pg"}),
+    ]
+}
 
 
 class PlanSummaryTest(unittest.TestCase):
@@ -44,21 +49,109 @@ class PlanSummaryTest(unittest.TestCase):
     def test_predicate(self):
         cases = [
             ("replace fails", PLAN, ["*"], False),
-            ("in scope passes", {"resource_changes": PLAN["resource_changes"][:2]}, ["aws_instance.*", "aws_s3_bucket.*"], True),
+            (
+                "in scope passes",
+                {"resource_changes": PLAN["resource_changes"][:2]},
+                ["aws_instance.*", "aws_s3_bucket.*"],
+                True,
+            ),
             ("out of scope fails", {"resource_changes": PLAN["resource_changes"][:2]}, ["aws_instance.*"], False),
             ("empty plan fails", {}, ["*"], False),
             ("iam fails", {"resource_changes": PLAN["resource_changes"][2:3]}, ["*"], False),
-            ("import outside scope fails", {"resource_changes": [dict(rc("aws_instance.prod", "aws_instance", ["no-op"], {}, {}),
-                                                                       change={"actions": ["no-op"], "importing": {"id": "i-1"}})]},
-             ["aws_instance.dev"], False),
-            ("public db fails", {"resource_changes": [rc("aws_db_instance.prod", "aws_db_instance", ["update"],
-                                                         {"publicly_accessible": False}, {"publicly_accessible": True})]},
-             ["*"], False),
+            (
+                "import outside scope fails",
+                {
+                    "resource_changes": [
+                        dict(
+                            rc("aws_instance.prod", "aws_instance", ["no-op"], {}, {}),
+                            change={"actions": ["no-op"], "importing": {"id": "i-1"}},
+                        )
+                    ]
+                },
+                ["aws_instance.dev"],
+                False,
+            ),
+            (
+                "public db fails",
+                {
+                    "resource_changes": [
+                        rc(
+                            "aws_db_instance.prod",
+                            "aws_db_instance",
+                            ["update"],
+                            {"publicly_accessible": False},
+                            {"publicly_accessible": True},
+                        )
+                    ]
+                },
+                ["*"],
+                False,
+            ),
             ("errored fails", {"errored": True, "resource_changes": PLAN["resource_changes"][:1]}, ["*"], False),
+            (
+                "create with instance profile fails",
+                {
+                    "resource_changes": [
+                        rc(
+                            "aws_instance.app",
+                            "aws_instance",
+                            ["create"],
+                            None,
+                            {"ami": "a", "iam_instance_profile": "admin"},
+                        )
+                    ]
+                },
+                ["*"],
+                False,
+            ),
+            (
+                "create with empty exposure attrs passes",
+                {
+                    "resource_changes": [
+                        rc(
+                            "aws_instance.app",
+                            "aws_instance",
+                            ["create"],
+                            None,
+                            {"ami": "a", "security_groups": [], "iam_instance_profile": None},
+                        )
+                    ]
+                },
+                ["*"],
+                True,
+            ),
+            (
+                "network rules change fails",
+                {
+                    "resource_changes": [
+                        rc(
+                            "azurerm_storage_account.sa",
+                            "azurerm_storage_account",
+                            ["update"],
+                            {"network_rules": [{"default_action": "Deny"}]},
+                            {"network_rules": [{"default_action": "Allow"}]},
+                        )
+                    ]
+                },
+                ["*"],
+                False,
+            ),
         ]
         for name, plan, scope, ok in cases:
             with self.subTest(name):
                 self.assertEqual(idstack.summarize_plan(plan, scope, True)["predicate"]["pass"], ok)
+
+    def test_redacts_sensitive_values(self):
+        change = {
+            "actions": ["update"],
+            "before": {"password": "old", "name": "db"},
+            "after": {"password": "new", "name": "db2"},
+            "after_unknown": {},
+            "before_sensitive": {"password": True},
+            "after_sensitive": {"password": True},
+        }
+        self.assertNotIn("new", json.dumps(idstack.change_diff(change)))
+        self.assertEqual(idstack.change_diff(change)["name"], {"before": "db", "after": "db2"})
 
 
 class GuardTest(unittest.TestCase):
@@ -85,6 +178,11 @@ class GuardTest(unittest.TestCase):
             "ssh -i key -p 22 host sudo systemctl restart nginx": True,
             "ssh host 'kubectl delete ns x'": True,
             "bash -c 'tofu destroy -auto-approve'": True,
+            "bash -lc 'kubectl delete namespace prod'": True,
+            "sh -ec 'kubectl get pods'": False,
+            "terragrunt run --all apply": True,
+            "terragrunt --working-dir infra apply": True,
+            "terragrunt run --all plan": False,
             "env FOO=1 timeout 30 helm uninstall x": True,
             "echo ok && kubectl apply -f x.yaml": True,
             "echo ok\nkubectl apply -f x.yaml": True,
@@ -118,12 +216,19 @@ class GuardTest(unittest.TestCase):
                 self.assertEqual(bool(idstack.classify(cmd, self.rules)), match)
 
     def hook(self, harness, cmd, mode="ask", state=None):
-        env = dict(os.environ, IDSTACK_GUARD_MODE=mode, IDSTACK_STATE_DIR=state or self.state,
-                   IDSTACK_CONFIG_DIR=self.state)
+        env = dict(
+            os.environ, IDSTACK_GUARD_MODE=mode, IDSTACK_STATE_DIR=state or self.state, IDSTACK_CONFIG_DIR=self.state
+        )
         env.pop("TYPESAFE_API_KEY", None)
         payload = json.dumps({"tool_name": "Bash", "tool_input": {"command": cmd}})
-        r = subprocess.run([sys.executable, str(BIN), "guard", "hook", "--harness", harness],
-                           input=payload, capture_output=True, text=True, env=env, check=True)
+        r = subprocess.run(
+            [sys.executable, str(BIN), "guard", "hook", "--harness", harness],
+            input=payload,
+            capture_output=True,
+            text=True,
+            env=env,
+            check=True,
+        )
         return json.loads(r.stdout) if r.stdout.strip() else None
 
     def setUp(self):
@@ -145,14 +250,31 @@ class GuardTest(unittest.TestCase):
         log = [json.loads(x) for x in (Path(self.state) / "guard.log").read_text().splitlines()]
         self.assertEqual([e["decision"] for e in log], ["ask", "deny", "deny", "logged"])
 
+    def test_hook_fails_closed(self):
+        blocked = Path(self.state) / "not-a-dir"
+        blocked.write_text("")
+        out = self.hook("claude", "kubectl delete pod x", state=str(blocked))
+        self.assertEqual(out["hookSpecificOutput"]["permissionDecision"], "ask", "unwritable state must still ask")
+        (Path(self.state) / "guard.json").write_text("{trunc")
+        out = self.hook("claude", "kubectl delete pod x", mode="")
+        self.assertEqual(
+            out["hookSpecificOutput"]["permissionDecision"], "ask", "corrupt config must not turn the guard off"
+        )
+
     def test_allow_once(self):
         env = dict(os.environ, IDSTACK_STATE_DIR=self.state, IDSTACK_CONFIG_DIR=self.state)
-        r = subprocess.run([sys.executable, str(BIN), "guard", "allow-once", "kubectl", "delete", "pod", "x"],
-                           env=env, capture_output=True, stdin=subprocess.DEVNULL)
+        r = subprocess.run(
+            [sys.executable, str(BIN), "guard", "allow-once", "kubectl", "delete", "pod", "x"],
+            env=env,
+            capture_output=True,
+            stdin=subprocess.DEVNULL,
+        )
         self.assertEqual(r.returncode, 1, "allow-once must refuse without a terminal")
         token = {idstack.cmd_hash("kubectl delete pod x"): time.time() + 60}
         (Path(self.state) / "guard-allow.json").write_text(json.dumps(token))
-        self.assertEqual(self.hook("codex", "kubectl  delete pod x")["hookSpecificOutput"]["permissionDecision"], "deny")
+        self.assertEqual(
+            self.hook("codex", "kubectl  delete pod x")["hookSpecificOutput"]["permissionDecision"], "deny"
+        )
         self.assertIsNone(self.hook("codex", "kubectl delete pod x"))
         self.assertEqual(self.hook("codex", "kubectl delete pod x")["hookSpecificOutput"]["permissionDecision"], "deny")
 
@@ -161,7 +283,10 @@ class JevRuleTest(unittest.TestCase):
     def test_outcomes(self):
         above = {"rule": "any-above", "threshold": 0.3, "questions": {"a": {}, "b": {}}}
         below = {"rule": "any-below", "threshold": 0.7, "questions": {"s": {}}}
-        ans = lambda **kw: {k: {"type": "noul", "noul": v} for k, v in kw.items()}
+
+        def ans(**kw):
+            return {k: {"type": "noul", "noul": v} for k, v in kw.items()}
+
         cases = [
             (above, ans(a=0.1, b=0.2), "clear"),
             (above, ans(a=0.1, b=0.9), "flag"),
@@ -182,7 +307,11 @@ class JevRuleTest(unittest.TestCase):
                 b = json.loads(path.read_text())
                 self.assertEqual(b["battery"], path.stem)
                 self.assertIn(b["rule"], ("any-above", "any-below", "rank"))
-                cases = [json.loads(x) for x in (ROOT / "fixtures/jev" / path.stem / "cases.jsonl").read_text().splitlines() if x]
+                cases = [
+                    json.loads(x)
+                    for x in (ROOT / "fixtures/jev" / path.stem / "cases.jsonl").read_text().splitlines()
+                    if x
+                ]
                 self.assertTrue(any(c["split"] == "holdout" for c in cases))
                 self.assertEqual(len({c["id"] for c in cases}), len(cases))
 

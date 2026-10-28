@@ -49,9 +49,12 @@ $idstack:id-mode rotate the leaked CI deploy token                      # Codex
 Codex namespaces plugin skills, so the bare `$id-mode` loads nothing. Run `/idstack:setup` (Claude
 Code) or `$idstack:setup` (Codex) once to check what is installed and to choose a guard mode. Both
 skills are explicit-only: when you hand a task to another agent (a T3 delegate, `claude -p`, or
-`codex exec`), start the task text with the slash or dollar form above. On OpenCode, ask for the `id-mode` skill. It reads pstack's `poteto-mode`, picks a playbook, copies
-its steps into a todo list, and stops at a gate before anything changes live state. Infra tasks go
-to idstack's playbooks; everything else goes to pstack's, unchanged.
+`codex exec`), start the task text with the slash or dollar form above. On OpenCode, ask for the
+`id-mode` skill.
+
+`id-mode` reads pstack's `poteto-mode`, picks a playbook, copies its steps into a todo list, and
+stops at a gate before anything changes live state. Infra tasks go to idstack's playbooks;
+everything else goes to pstack's, unchanged.
 
 ## What it is
 
@@ -65,12 +68,12 @@ to idstack's playbooks; everything else goes to pstack's, unchanged.
   stops at a gate that shows the exact command, target, blast radius, rollback, and evidence.
 - Four principles (plan before apply, pin the target, prove the restore, reversible first) and
   three subagents: `id-agent` for delegates, `plan-reader`, and `change-verifier`.
-- Optional Jev decision points for cheap typed judgments. Their answers can only make a gate
-  stricter.
-
+- Optional Jev decision points for cheap typed judgments. They need `TYPESAFE_API_KEY`; without
+  it, playbooks use their deterministic checks. Jev answers can only make a gate stricter.
 - An `idstack` CLI the playbooks call: `plan-summary` (counts, deletes and replaces, stateful, IAM,
   and network changes, and a predicate check for grants), `judge` (one Jev decision point),
-  `doctor`, and `guard`.
+  `doctor` (what is installed or missing), `check` (repository checks), `build` (generate the
+  Codex and OpenCode files), and `guard`.
 - An opt-in guard that asks (Claude Code) or blocks (Codex) before state-mutating infra commands.
   OpenCode has none yet. Off by default. It is a seatbelt, not a lock: the gates apply with it off.
 

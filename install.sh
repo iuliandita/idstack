@@ -492,8 +492,13 @@ unlink_set() {
 }
 
 check_set() {
-  # check_set <label> <dest dir>
-  if [[ -f $2/.idstack-install.json ]]; then status "$1" ok; else status "$1" absent; fi
+  # check_set <label> <dest dir>: ok only when every recorded link still resolves
+  local manifest=$2/.idstack-install.json name broken=0
+  if [[ ! -f $manifest ]]; then status "$1" absent; return; fi
+  while IFS= read -r name; do
+    [[ -n $name && ! ( -L $2/$name && -e $2/$name ) ]] && broken=$((broken + 1))
+  done < <(jq_op lines files <"$manifest"; jq_op lines skills <"$manifest")
+  if ((broken)); then status "$1" "broken ($broken missing)"; else status "$1" ok; fi
 }
 
 cli_check() {
@@ -530,11 +535,7 @@ cli_uninstall() {
 
 opencode_check() {
   log "OpenCode"
-  if [[ -f $IDSTACK_MANIFEST ]]; then
-    status "idstack in $OPENCODE_SKILLS_DIR" ok
-  else
-    status "idstack in $OPENCODE_SKILLS_DIR" absent
-  fi
+  check_set "idstack in $OPENCODE_SKILLS_DIR" "$OPENCODE_SKILLS_DIR"
   check_set "agents in $OPENCODE_AGENTS_DIR" "$OPENCODE_AGENTS_DIR"
 }
 

@@ -30,6 +30,13 @@ jobs:
       - name: Generated files are current
         run: python3 bin/idstack build --check
 
+      - name: Ruff
+        env:
+          RUFF_VERSION: "0.17.3"
+        run: |
+          pipx run "ruff==${RUFF_VERSION}" check bin/idstack scripts tests
+          pipx run "ruff==${RUFF_VERSION}" format --check bin/idstack scripts tests
+
       - name: Shellcheck
         run: shellcheck install.sh
 

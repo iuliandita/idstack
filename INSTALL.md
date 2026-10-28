@@ -2,19 +2,19 @@
 
 ## Contents
 
-- Requirements
-- Install with the script
-- What the script does on each harness
-- pstack model files
-- Install by hand
-- Check, update, and channels
-- Uninstall
-- Recovery
-- Environment and exit codes
+- [Requirements](#requirements)
+- [Install with the script](#install-with-the-script)
+- [What the script does on each harness](#what-the-script-does-on-each-harness)
+- [pstack model files](#pstack-model-files)
+- [Install by hand](#install-by-hand)
+- [Check, update, and channels](#check-update-and-channels)
+- [Uninstall](#uninstall)
+- [Recovery](#recovery)
+- [Environment and exit codes](#environment-and-exit-codes)
 
 ## Requirements
 
-- `bash`, `git`, and `python3` (standard library only).
+- `bash`, `git`, and Python 3.11 or later (standard library only).
 - At least one harness: Claude Code 2.1.275 or later, Codex CLI with `codex plugin`, or OpenCode.
 - Network access to GitHub.
 
@@ -99,16 +99,17 @@ used (any difference, even in spaces, needs a new approval), and let the agent r
 
 pstack picks a model and effort for each subagent role from a settings file. Without one it uses
 its own defaults, which run judgment roles on Opus at `xhigh` and code roles on the session model.
-The script writes both settings files from [config/pstack-models.json](config/pstack-models.json):
+The script writes the file for each selected harness from
+[config/pstack-models.json](config/pstack-models.json):
 
 | File | Read by |
 | --- | --- |
-| `~/.claude/rules/pstack-models.md` | Claude Code, loaded into every session |
-| `~/.agents/pstack-models.md` | Codex and OpenCode, read when pstack picks a model |
+| `~/.claude/rules/pstack-models.md` | Claude Code, loaded into every session; written for `claude` |
+| `~/.agents/pstack-models.md` | Codex and OpenCode, read when pstack picks a model; written for `codex` or `opencode` |
 
 Roles route across providers. A value such as `gpt-6.1-terra medium via codex else sonnet medium`
 runs on Codex by the first route available: T3 Code's `delegate_task` when the session runs under
-T3, otherwise the `codex` CLI headless (`codex exec`, `claude -p`, or `opencode run`, read-only
+T3, otherwise the provider's own CLI headless (`codex exec`, `claude -p`, or `opencode run`, read-only
 unless the role edits files), otherwise Sonnet with the harness's own subagent tool. Values
 without `via` always run natively. The exact commands live in the `t3` section of the JSON and are
 copied into each file.
@@ -162,10 +163,15 @@ codex plugin add idstack@idstack
 ```
 
 Use the commit from `PSTACK_MIRROR_REF` in `install.sh`. The `skills` CLI does not check for name
-collisions the way the script does.
+collisions the way the script does. Then link each `harness/codex/agents/*.toml` file from a clone
+of this repo into `~/.codex/agents` (or `$CODEX_HOME/agents`).
 
 OpenCode: install pstack the same way with `-a opencode`, then link the folders under this repo's
-`skills/` into `~/.config/opencode/skills`.
+`skills/` into `~/.config/opencode/skills` and each `harness/opencode/agents/*.md` file into
+`~/.config/opencode/agents`.
+
+Every harness: link `bin/idstack` from the clone into a directory on your PATH, for example
+`ln -s "$PWD/bin/idstack" ~/.local/bin/idstack`.
 
 ## Check, update, and channels
 
@@ -184,8 +190,9 @@ OpenCode: install pstack the same way with `-a opencode`, then link the folders 
 ./install.sh --uninstall
 ```
 
-This removes idstack, its subagent links, the CLI link, the Codex guard hook if it installed one, and the model files it wrote, and leaves pstack in place. Guard settings in
-`~/.config/idstack` and logs in `~/.local/state/idstack` stay; delete them by hand if you want. To remove pstack too:
+This removes idstack, its subagent links, the CLI link, the Codex guard hook if it installed one,
+and the model files it wrote, and leaves pstack in place. Guard settings in `~/.config/idstack` and
+logs in `~/.local/state/idstack` stay; delete them by hand if you want. To remove pstack too:
 
 - Claude Code: `claude plugin uninstall pstack@cursor-plugins`.
 - Codex and OpenCode: delete the folders listed in `~/.agents/skills/.pstack-install.json`, then
@@ -206,19 +213,27 @@ This removes idstack, its subagent links, the CLI link, the Codex guard hook if 
 | Variable | Default | Used for |
 | --- | --- | --- |
 | `CLAUDE_CONFIG_DIR` | `~/.claude` | Read by the `claude` CLI. |
-| `CODEX_HOME` | `~/.codex` | Read by the `codex` CLI. |
+| `CODEX_HOME` | `~/.codex` | Read by the `codex` CLI. The script links Codex subagents into `$CODEX_HOME/agents`. |
 | `AGENTS_SKILLS_DIR` | `~/.agents/skills` | Where pstack goes for Codex and OpenCode. |
 | `OPENCODE_SKILLS_DIR` | `~/.config/opencode/skills` | Where idstack skills are linked for OpenCode. |
 | `IDSTACK_CACHE_DIR` | `~/.local/share/idstack` | The idstack clone OpenCode links and the CLI link point into. |
 | `IDSTACK_BIN_DIR` | `~/.local/bin` | Where the `idstack` CLI is linked. |
 | `OPENCODE_AGENTS_DIR` | `~/.config/opencode/agents` | Where idstack subagents are linked for OpenCode. |
+| `XDG_CONFIG_HOME` | `~/.config` | Base of the OpenCode skills and agents defaults. |
+| `XDG_DATA_HOME` | `~/.local/share` | Base of the `IDSTACK_CACHE_DIR` default. |
 
-The CLI itself reads `IDSTACK_CONFIG_DIR` (default `~/.config/idstack`), `IDSTACK_STATE_DIR`
-(default `~/.local/state/idstack`), and `IDSTACK_GUARD_MODE` (`off`, `log`, or `ask`, overriding
-the config file).
+The CLI itself reads:
 
-Pointing all of the installer's variables at a temporary directory gives an isolated install that touches nothing else,
-which is how CI tests the script.
+| Variable | Default | Used for |
+| --- | --- | --- |
+| `IDSTACK_CONFIG_DIR` | `$XDG_CONFIG_HOME/idstack` (`~/.config/idstack`) | Guard settings. |
+| `IDSTACK_STATE_DIR` | `$XDG_STATE_HOME/idstack` (`~/.local/state/idstack`) | Guard log and allow-once tokens. |
+| `IDSTACK_GUARD_MODE` | unset | `off`, `log`, or `ask`, overriding the config file. |
+| `TYPESAFE_API_KEY` | unset | Jev. Without it, `idstack judge` exits 4 and playbooks use their deterministic checks; a failed call exits 3. |
+| `IDSTACK_JEV_URL` | `https://api.typesafe.ai/v1/systemone` | The Jev endpoint. |
+
+Pointing all of the installer's variables at a temporary directory gives an isolated install that
+touches nothing else, which is how CI tests the script.
 
 | Exit code | Meaning |
 | --- | --- |

@@ -11,6 +11,12 @@ In scope:
   what it pins, or run something it does not show.
 - The safety model: a playbook, overlay, or decision rule that lets an agent change live state
   without a gate, or lets a Jev answer loosen a gate.
+- The guard: a state-mutating command it should match that runs without an ask or block, or a way
+  for an agent to approve its own command.
+- `idstack plan-summary --predicate` exiting 0 on a plan that has a delete, replace, or forget, an
+  out-of-scope change, or an IAM or network change the grant did not allow.
+- `idstack judge`: any path where a Jev answer, a failed call, or a missing answer clears an item
+  instead of tightening it.
 - Leaks of credentials or private data through playbook output or evidence logs.
 
 Out of scope: pstack itself (report to [cursor/plugins](https://github.com/cursor/plugins)), the
