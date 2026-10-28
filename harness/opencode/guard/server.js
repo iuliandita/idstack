@@ -21,13 +21,17 @@ async function setup(ctx) {
   await ctx.tool.hook("execute.before", async (event) => {
     if (!SHELL_TOOLS.has(String(event.tool).toLowerCase())) return
     const input = event.input
-    if (typeof input?.command !== "string" || !input.command) return
+    const command = input?.command
+    if (command === "") return
+    // A list is joined by the CLI; any other shape is held, since it cannot be checked.
+    const readable = typeof command === "string" || (Array.isArray(command) && command.every((c) => typeof c === "string"))
+    if (!readable) throw new Error("idstack guard: a shell call without a readable command was held (fail closed).")
     const cwd = typeof input.workdir === "string" && input.workdir !== ""
       ? resolve(ctx.location.directory, input.workdir)
       : ctx.location.directory
     let out
     try {
-      out = await hook(input.command, cwd)
+      out = await hook(command, cwd)
     } catch (err) {
       // Fail closed, as the Claude Code and Codex hooks do.
       throw new Error(`idstack guard could not run (${err.message}); the command was held. ` +
