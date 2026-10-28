@@ -1,13 +1,27 @@
 {
   "t3": {
-    "codex": { "option": "reasoningEffort" },
+    "codex": {
+      "option": "reasoningEffort",
+      "cli": {
+        "read": "codex exec -m {model} -c model_reasoning_effort={effort} -s read-only --skip-git-repo-check --ephemeral \"<brief>\"",
+        "write": "codex exec -m {model} -c model_reasoning_effort={effort} -s workspace-write --skip-git-repo-check --ephemeral \"<brief>\""
+      }
+    },
     "claudeAgent": {
       "option": "effort",
-      "models": ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"]
+      "models": ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"],
+      "cli": {
+        "read": "claude -p --model {model} --effort {effort} --permission-mode plan --no-session-persistence \"<brief>\"",
+        "write": "claude -p --model {model} --effort {effort} --permission-mode acceptEdits --no-session-persistence \"<brief>\""
+      }
     },
     "opencode": {
       "option": "variant",
-      "efforts": { "opencode-go/deepseek-v4.1-flash": ["low", "high", "max"] }
+      "efforts": { "opencode-go/deepseek-v4.1-flash": ["low", "high", "max"] },
+      "cli": {
+        "read": "opencode run -m {model}#{effort} \"<brief>\"",
+        "write": "opencode run -m {model}#{effort} --auto \"<brief>\""
+      }
     }
   },
   "claude": {
@@ -36,7 +50,7 @@
   "agents": {
     "budget": "medium (high)",
     "notes": [
-      "Plain values are Codex slugs. In OpenCode, run them via codex with delegate_task; without delegate_task use opencode-go/deepseek-v4.1-flash high."
+      "Plain values are Codex slugs. In OpenCode, run them as if they said `via codex` (steps 1 and 2); failing both, use opencode-go/deepseek-v4.1-flash high."
     ],
     "roles": {
       "feature, refactoring": "gpt-6.1-terra medium",

@@ -87,10 +87,16 @@ The script writes both settings files from [config/pstack-models.json](config/ps
 | `~/.claude/rules/pstack-models.md` | Claude Code, loaded into every session |
 | `~/.agents/pstack-models.md` | Codex and OpenCode, read when pstack picks a model |
 
-The roles route across providers when the session runs under T3 Code, which can start a child
-agent on another provider with `delegate_task`. A value such as
-`gpt-6.1-terra medium via codex else sonnet medium` runs on Codex through T3, and on Sonnet with
-the harness's own subagent tool when T3 is not there. Values without `via` always run natively.
+Roles route across providers. A value such as `gpt-6.1-terra medium via codex else sonnet medium`
+runs on Codex by the first route available: T3 Code's `delegate_task` when the session runs under
+T3, otherwise the `codex` CLI headless (`codex exec`, `claude -p`, or `opencode run`, read-only
+unless the role edits files), otherwise Sonnet with the harness's own subagent tool. Values
+without `via` always run natively. The exact commands live in the `t3` section of the JSON and are
+copied into each file.
+
+A Codex session calling `claude -p` or `opencode run` needs network access in its sandbox; the
+default `workspace-write` sandbox blocks it, so those roles fall through to the native model there
+unless you allow network access.
 
 | Role group | From Claude Code | From Codex |
 | --- | --- | --- |
