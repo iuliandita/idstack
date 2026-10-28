@@ -13,7 +13,8 @@ v0.x is the prerelease phase, where breaking changes are expected.
 - `install.sh`: installs idstack and pstack on Claude Code, Codex, and OpenCode, with `--check`,
   `--dry-run`, `--force`, and `--uninstall`.
 - pstack model files for Claude Code and Codex/OpenCode, generated from
-  `config/pstack-models.json` and validated against the harness model catalogs.
+  `config/pstack-models.json`, routing roles across providers through T3 Code with a native
+  fallback, and validated against the harness model catalogs.
 - User docs: README, INSTALL, CONTRIBUTING, SECURITY, and a docs index.
 - Repository checks (`scripts/check.py`), CI with an isolated install smoke test on pinned Claude
   Code and Codex CLIs, security scanning, release workflow, issue and PR templates, and Dependabot

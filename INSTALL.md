@@ -82,14 +82,30 @@ pstack picks a model and effort for each subagent role from a settings file. Wit
 its own defaults, which run judgment roles on Opus at `xhigh` and code roles on the session model.
 The script writes both settings files from [config/pstack-models.json](config/pstack-models.json):
 
-| File | Read by | Models |
-| --- | --- | --- |
-| `~/.claude/rules/pstack-models.md` | Claude Code, loaded into every session | Haiku for exploration, Sonnet for code, Opus for judgment and the hardest tasks |
-| `~/.agents/pstack-models.md` | Codex and OpenCode, read when pstack picks a model | Luna for exploration, Terra for routine code, Sol for debugging, judgment, and the hardest tasks; OpenCode is told to use DeepSeek Flash |
+| File | Read by |
+| --- | --- |
+| `~/.claude/rules/pstack-models.md` | Claude Code, loaded into every session |
+| `~/.agents/pstack-models.md` | Codex and OpenCode, read when pstack picks a model |
 
-Effort starts at `medium` and goes to `high` only for hard roles. Before writing, the script
-checks every role is present, every Claude model is one Claude Code accepts, and, when `codex` is
-installed, every Codex model and effort is in `codex debug models`.
+The roles route across providers when the session runs under T3 Code, which can start a child
+agent on another provider with `delegate_task`. A value such as
+`gpt-6.1-terra medium via codex else sonnet medium` runs on Codex through T3, and on Sonnet with
+the harness's own subagent tool when T3 is not there. Values without `via` always run natively.
+
+| Role group | From Claude Code | From Codex |
+| --- | --- | --- |
+| Routine code, swarm workers | Terra via Codex, else Sonnet | Terra |
+| Bug fixes, performance | Sol via Codex, else Opus | Sol |
+| Exploration (`how`, `why` investigators) | DeepSeek Flash via OpenCode, else Haiku | DeepSeek Flash via OpenCode, else Luna |
+| Judgment and prose | Opus | Opus via Claude, else Sol |
+| Hardest tasks, synthesizers | Opus | Sol |
+| Review panels (arena, architect, interrogate) | Opus plus Sol via Codex | Sol plus Opus via Claude |
+
+Effort starts at `medium` and goes to `high` only for hard roles; fast mode and the priority tier
+are off. Before writing, the script checks every role is present and every value parses. It checks
+Claude Code models against the names its subagents accept, Codex models and efforts against
+`codex debug models`, OpenCode models against `opencode models`, and T3 Claude models and
+DeepSeek Flash efforts against the lists in the JSON.
 
 Each file carries a `managed by idstack` line. The script replaces only files with that line. If
 you ran `/setup-pstack` yourself, it leaves your file alone and reports it; `--force` backs it up

@@ -11,6 +11,7 @@ Exit codes: 0 ok, 1 failure or (with --check) not current, 2 usage, 3 invalid co
 import argparse
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -39,49 +40,92 @@ def target_path(target: str) -> Path:
     return skills.parent / "pstack-models.md"
 
 
-def codex_models() -> dict[str, set[str]] | None:
-    if not shutil.which("codex"):
+ENTRY = re.compile(r"^(\S+) (\S+)(?: via (\S+) else (\S+) (\S+))?$")
+
+
+def catalog(cmd: list[str], parse) -> dict[str, set[str] | None] | None:
+    """Models a CLI lists, mapped to their efforts (None when the CLI does not say)."""
+    if not shutil.which(cmd[0]):
         return None
     try:
-        out = subprocess.run(["codex", "debug", "models"], check=True, capture_output=True, text=True, timeout=60).stdout
-        models = json.loads(out)["models"]
+        out = subprocess.run(cmd, check=True, capture_output=True, text=True, timeout=60).stdout
+        return parse(out)
     except (subprocess.SubprocessError, OSError, ValueError, KeyError):
         return None
-    return {m["slug"]: {e["effort"] for e in m.get("supported_reasoning_levels", [])} for m in models}
 
 
-def validate(target: str, roles: dict[str, str]) -> list[str]:
+def codex_catalog() -> dict[str, set[str] | None] | None:
+    return catalog(["codex", "debug", "models"], lambda out: {
+        m["slug"]: {e["effort"] for e in m.get("supported_reasoning_levels", [])}
+        for m in json.loads(out)["models"]
+    })
+
+
+def opencode_catalog() -> dict[str, set[str] | None] | None:
+    return catalog(["opencode", "models"], lambda out: {line.strip(): None for line in out.splitlines() if "/" in line})
+
+
+def validate(target: str, roles: dict[str, str], t3: dict) -> list[str]:
     errors = []
     if set(roles) != set(ROLES):
         missing, extra = set(ROLES) - set(roles), set(roles) - set(ROLES)
         errors += [f"{target}: missing role {r!r}" for r in sorted(missing)]
         errors += [f"{target}: unknown role {r!r}" for r in sorted(extra)]
-    known = codex_models() if target == "agents" else None
-    if target == "agents" and known is None:
-        print(f"warning: codex is not available; {target} model names were not checked against its catalog", file=sys.stderr)
+    catalogs = {
+        "codex": codex_catalog(),
+        "opencode": opencode_catalog(),
+        "claudeAgent": {m: None for m in t3["claudeAgent"]["models"]},
+    }
+    for name, cat in catalogs.items():
+        if cat is None:
+            print(f"warning: {name} is not available; its model names were not checked", file=sys.stderr)
+    native = "claude" if target == "claude" else "codex"
+
+    def check(role: str, model: str, effort: str, provider: str) -> None:
+        if effort not in EFFORTS:
+            errors.append(f"{target}: {role}: unknown effort {effort!r}")
+        elif provider == "claude":
+            if model not in CLAUDE_MODELS:
+                errors.append(f"{target}: {role}: Claude Code subagents do not take model {model!r}")
+        elif provider not in catalogs:
+            errors.append(f"{target}: {role}: unknown T3 provider {provider!r}")
+        elif (cat := catalogs[provider]) is not None:
+            allowed = t3.get(provider, {}).get("efforts", {}).get(model) or cat.get(model)
+            if model not in cat:
+                errors.append(f"{target}: {role}: {provider} does not list model {model!r}")
+            elif allowed and effort not in allowed:
+                errors.append(f"{target}: {role}: {model} does not support effort {effort!r}")
+
     for role, value in roles.items():
         for entry in (v.strip() for v in value.split(",")):
             if entry in ("inherit-parent", "auto"):
                 continue
-            parts = entry.split()
-            if len(parts) != 2 or parts[1] not in EFFORTS:
-                errors.append(f"{target}: {role}: {entry!r} is not '<model> <effort>'")
+            m = ENTRY.match(entry)
+            if not m:
+                errors.append(f"{target}: {role}: {entry!r} is not '<model> <effort> [via <provider> else <model> <effort>]'")
                 continue
-            model, effort = parts
-            if target == "claude" and model not in CLAUDE_MODELS:
-                errors.append(f"{target}: {role}: unknown Claude Code model {model!r}")
-            elif known is not None and model not in known:
-                errors.append(f"{target}: {role}: codex does not list model {model!r}")
-            elif known is not None and effort not in known[model]:
-                errors.append(f"{target}: {role}: {model} does not support effort {effort!r}")
+            model, effort, via, else_model, else_effort = m.groups()
+            if via:
+                check(role, model, effort, via)
+                check(role, else_model, else_effort, native)
+            else:
+                check(role, model, effort, native)
     return errors
 
 
-def render(spec: dict) -> str:
+def render(spec: dict, t3: dict) -> str:
+    options = ", ".join(f"{p} {v['option']}" for p, v in t3.items())
     lines = [
         "# pstack model configuration. One line per role. Delete a line to fall back to the skill default.",
         "# `inherit-parent` or `auto` as a value: the role runs on the parent chat model (omit the subagent `model`).",
         MARKER,
+        "# A value is `<model> <effort>`, run with this harness's own subagent tool.",
+        "# `<model> <effort> via <provider> else <model> <effort>`: in T3 Code, run it with delegate_task,",
+        f"# target providerInstanceId <provider>, model <model>, options {{<option>: <effort>}} ({options}).",
+        "# Give that child a self-contained brief: scope, owned files, expected output, verification commands.",
+        "# Without delegate_task, or when T3 rejects the target, use the `else` model natively and say so.",
+        "# Never use fast mode or the priority service tier for these roles.",
+        "# A verifier or final reviewer comes from a family other than the change's author; pick the panel entry that differs.",
         *(f"# {note}" for note in spec.get("notes", [])),
         f"# budget: {spec['budget']}",
         *(f"{role}: {spec['roles'][role]}" for role in ROLES),
@@ -109,7 +153,7 @@ def main() -> int:
 
     config = json.loads(CONFIG.read_text())
     if not args.uninstall:
-        errors = [e for t in targets for e in validate(t, config[t]["roles"])]
+        errors = [e for t in targets for e in validate(t, config[t]["roles"], config["t3"])]
         if errors:
             for e in errors:
                 print(f"error: {e}", file=sys.stderr)
@@ -126,7 +170,7 @@ def main() -> int:
                 path.unlink()
                 print(f"  removed {path}")
             continue
-        wanted = render(config[target])
+        wanted = render(config[target], config["t3"])
         if args.check:
             state = "ok" if current == wanted else "absent" if current is None else "outdated" if managed else "not managed by idstack"
             print(f"  {label:<28} {state} ({path})")
