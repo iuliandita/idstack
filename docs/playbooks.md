@@ -1,6 +1,6 @@
 # idstack playbook catalog
 
-Status: draft specs. Each entry is the design for one playbook file in `skills/id-mode/playbooks/`. The shipped files will be shorter: numbered steps, gates, and a Reply line, in pstack's format.
+Status: design specs. The shipped playbooks are in [skills/id-mode/playbooks/](../skills/id-mode/playbooks/), in pstack's format. Where a spec names `idstack plan-summary` or `idstack judge`, the shipped playbooks use the `plan-reader` subagent and optional Jev decision points until the CLI exists.
 
 Conventions used below:
 

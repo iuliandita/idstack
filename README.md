@@ -7,8 +7,8 @@ pstack gives agents a rigorous way to do software work. idstack adds what infra 
 work does not: plan before apply, pin the target before touching it, prove that backups restore,
 and never let a green check stand in for the live state.
 
-Status: pre-alpha. The installer, manifests, and CI work; the playbooks are designed but not
-written yet. See the [roadmap](docs/plan.md#15-roadmap).
+Status: pre-alpha. The router, playbooks, principles, and subagents ship; the `idstack` CLI, the
+guard hook, and the setup skill are still to come. See the [roadmap](docs/plan.md#15-roadmap).
 
 ## Install
 
@@ -36,17 +36,33 @@ idstack declares pstack as a dependency, so the last line installs both. The `cu
 marketplace has to be added first. [INSTALL.md](INSTALL.md) covers Codex, OpenCode, updates,
 channels, and removal.
 
+## Usage
+
+Start a new session after installing, then hand the router the task:
+
+```text
+/idstack:id-mode bump the ingress-nginx chart and stop before sync     # Claude Code
+$id-mode rotate the leaked CI deploy token                              # Codex
+```
+
+On OpenCode, ask for the `id-mode` skill. It reads pstack's `poteto-mode`, picks a playbook, copies
+its steps into a todo list, and stops at a gate before anything changes live state. Infra tasks go
+to idstack's playbooks; everything else goes to pstack's, unchanged.
+
 ## What it is
 
 - A router skill, `/idstack:id-mode`, that sits on top of pstack's `poteto-mode` and routes infra
   tasks to idstack playbooks, and everything else to pstack's.
 - 21 playbooks for change (IaC, GitOps, host config, edge, upgrades, dependency bumps), diagnosis
   (live triage, incidents), and assurance (restore drills, drift, monitoring, security posture,
-  capacity and cost). The catalog is in [docs/playbooks.md](docs/playbooks.md).
+  capacity and cost), plus six overlays on pstack playbooks. The catalog is in
+  [skills/id-mode/SKILL.md](skills/id-mode/SKILL.md).
 - A safety model: reads are free, reversible writes are free, and anything that changes live state
   stops at a gate that shows the exact command, target, blast radius, rollback, and evidence.
-- An optional decision layer that uses TypeSafe's Jev for cheap typed judgments. Its answers can
-  only make a gate stricter.
+- Four principles (plan before apply, pin the target, prove the restore, reversible first) and
+  three subagents: `id-agent` for delegates, `plan-reader`, and `change-verifier`.
+- Optional Jev decision points for cheap typed judgments. Their answers can only make a gate
+  stricter.
 
 Domain knowledge (how Terraform, Kubernetes, or Prometheus work) stays in separate domain skills.
 idstack holds the process. The design is in [docs/plan.md](docs/plan.md).
