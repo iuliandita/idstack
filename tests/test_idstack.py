@@ -2,6 +2,7 @@ import importlib.machinery
 import importlib.util
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -314,6 +315,42 @@ class JevRuleTest(unittest.TestCase):
                 ]
                 self.assertTrue(any(c["split"] == "holdout" for c in cases))
                 self.assertEqual(len({c["id"] for c in cases}), len(cases))
+
+
+NODE_DRIVER = """
+const { default: plugin } = await import(process.argv[1]);
+let hook;
+await plugin.setup({ location: { directory: process.cwd() }, tool: { hook: async (_, cb) => { hook = cb; } } });
+const out = [];
+for (const command of JSON.parse(process.argv[2])) {
+  try { await hook({ tool: "bash", input: { command } }); out.push("pass"); } catch { out.push("block"); }
+}
+console.log(JSON.stringify(out));
+"""
+
+
+@unittest.skipUnless(shutil.which("node"), "node not installed")
+class OpencodePluginTest(unittest.TestCase):
+    def test_blocks_matches_and_unreadable_shapes(self):
+        commands = ["kubectl delete pod x", ["kubectl", "delete", "pod", "x"], {"x": 1}, "kubectl get pods", ""]
+        with tempfile.TemporaryDirectory() as state:
+            env = dict(os.environ, IDSTACK_GUARD_MODE="ask", IDSTACK_STATE_DIR=state, IDSTACK_CONFIG_DIR=state)
+            env.pop("TYPESAFE_API_KEY", None)
+            r = subprocess.run(
+                [
+                    "node",
+                    "--input-type=module",
+                    "-e",
+                    NODE_DRIVER,
+                    str(ROOT / "harness/opencode/guard/server.js"),
+                    json.dumps(commands),
+                ],
+                env=env,
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+        self.assertEqual(json.loads(r.stdout), ["block", "block", "block", "pass", "pass"])
 
 
 class GuardInstallTest(unittest.TestCase):

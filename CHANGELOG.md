@@ -6,6 +6,13 @@ v0.x is the prerelease phase, where breaking changes are expected.
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-10-28
+
+### Fixed
+
+- The OpenCode guard checked only string commands; a command given as a list went through
+  unchecked. Lists now go to the guard, and a shell call with any other shape is held.
+
 ## [0.4.0] - 2026-10-28
 
 OpenCode as a full harness, and your own model choices.
@@ -130,7 +137,8 @@ playbooks yet.
   Code and Codex CLIs, security scanning, release workflow, issue and PR templates, and Dependabot
   for workflow actions and the pinned CLIs.
 
-[Unreleased]: https://github.com/iuliandita/idstack/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/iuliandita/idstack/compare/v0.4.1...HEAD
+[0.4.1]: https://github.com/iuliandita/idstack/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/iuliandita/idstack/compare/v0.3.2...v0.4.0
 [0.3.2]: https://github.com/iuliandita/idstack/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/iuliandita/idstack/compare/v0.3.0...v0.3.1
