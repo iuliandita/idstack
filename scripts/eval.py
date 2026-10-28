@@ -75,7 +75,7 @@ def run_codex(task: str, work: Path, env: dict, a) -> tuple[list[str], str, str]
         cmd += ["-c", kv]
     if a.model:
         cmd += ["-m", a.model]
-    cmd.append(f"$id-mode {task}")
+    cmd.append(f"$idstack:id-mode {task}")
     r = subprocess.run(cmd, cwd=work, env=env, capture_output=True, text=True, timeout=a.timeout)
     cmds, reply = [], ""
     for line in r.stdout.splitlines():

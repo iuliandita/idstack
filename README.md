@@ -43,11 +43,13 @@ Start a new session after installing, then hand the router the task:
 
 ```text
 /idstack:id-mode bump the ingress-nginx chart and stop before sync     # Claude Code
-$id-mode rotate the leaked CI deploy token                              # Codex
+$idstack:id-mode rotate the leaked CI deploy token                      # Codex
 ```
 
-Run `/idstack:setup` (Claude Code) or `$setup` (Codex) once to check what is installed and to
-choose a guard mode. On OpenCode, ask for the `id-mode` skill. It reads pstack's `poteto-mode`, picks a playbook, copies
+Codex namespaces plugin skills, so the bare `$id-mode` loads nothing. Run `/idstack:setup` (Claude
+Code) or `$idstack:setup` (Codex) once to check what is installed and to choose a guard mode. Both
+skills are explicit-only: when you hand a task to another agent (a T3 delegate, `claude -p`, or
+`codex exec`), start the task text with the slash or dollar form above. On OpenCode, ask for the `id-mode` skill. It reads pstack's `poteto-mode`, picks a playbook, copies
 its steps into a todo list, and stops at a gate before anything changes live state. Infra tasks go
 to idstack's playbooks; everything else goes to pstack's, unchanged.
 

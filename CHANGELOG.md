@@ -4,6 +4,14 @@ All notable changes to idstack are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions follow semver from v1.0.0;
 v0.x is the prerelease phase, where breaking changes are expected.
 
+## [0.3.1] - 2026-10-28
+
+### Fixed
+
+- Codex usage: plugin skills are namespaced, so the README now shows `$idstack:id-mode` and
+  `$idstack:setup`; the bare `$id-mode` loaded nothing. `scripts/eval.py` uses the same form.
+- README says how to start a delegated or headless task so the explicit-only skills load.
+
 ## [0.3.0] - 2026-10-28
 
 The `idstack` CLI, the opt-in guard, and native subagents on Codex and OpenCode.
