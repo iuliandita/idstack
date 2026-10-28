@@ -20,7 +20,7 @@ Report first, then change only what the operator picks. Every step here is local
    - `off` (default): nothing runs.
    - `log`: matching commands run and are logged to the idstack state directory.
    - `ask`: Claude Code asks before each matching command. Codex cannot ask, so it blocks it; the operator then runs `idstack guard allow-once '<command>'` in their own terminal. OpenCode has no idstack guard yet.
-   The guard is a seatbelt, not a lock: scripts, aliases, and quoting can hide a command from it. The gates in `id-mode` still apply with the guard off.
+   The guard also matches its own control commands (`allow-once`, `enable`, `disable`, `install`, `uninstall`), so with it on, the operator approves each of those too, and `allow-once` only works from an interactive terminal. The guard is a seatbelt, not a lock: scripts, aliases, quoting, and direct edits to its config files can get around it. The gates in `id-mode` still apply with the guard off.
    On a choice, run `idstack guard enable --mode <log|ask>` or `idstack guard disable`. For Codex, also run `idstack guard install --harness codex`, then tell the operator to trust the hook with `/hooks` in Codex. Test with `idstack guard test kubectl delete pod x`, which prints the match without running anything.
 6. Jev. If `TYPESAFE_API_KEY` is set (check that it is set; never print it), offer `idstack guard enable --mode <current> --jev on`, which asks Jev about infra commands the rules do not match. It adds a call of up to 5 seconds to those commands and can only add asks, never remove them. Decision points in the playbooks use `idstack judge` either way.
 7. End with what changed, what was left as is, and each remaining `fail` with its owner.

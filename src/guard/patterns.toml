@@ -7,6 +7,11 @@
 # The guard is a seatbelt, not a lock: aliases, scripts, and quoting can hide a verb.
 
 [[rule]]
+tools = ["idstack"]
+verbs = ["guard allow-once", "guard enable", "guard disable", "guard install", "guard uninstall"]
+reason = "changes the guard itself; only the operator does this"
+
+[[rule]]
 tools = ["terraform", "tofu", "terragrunt"]
 verbs = ["apply", "destroy", "import", "taint", "untaint", "force-unlock", "state rm", "state mv", "state push", "state replace-provider", "workspace delete", "run-all apply", "run-all destroy"]
 reason = "changes infrastructure or state"

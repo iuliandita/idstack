@@ -528,6 +528,8 @@ def classify(cmd: str, rules: list[dict], remote: bool = False, depth: int = 0) 
         if not seg:
             continue
         tool, args = os.path.basename(seg[0]), seg[1:]
+        if re.fullmatch(r"python[0-9.]*", tool) and args and os.path.basename(args[0]) == "idstack":
+            tool, args = "idstack", args[1:]
         if tool in SHELLS and "-c" in args:
             i = args.index("-c")
             if i + 1 < len(args):
@@ -669,8 +671,9 @@ def guard_hook(a) -> int:
         guard_log(dict(entry, decision="allowed-once"))
         return EXIT_OK
     guard_log(dict(entry, decision="deny"))
-    msg += (" This harness cannot ask, so the command was blocked. After approval, the operator runs "
-            "`idstack guard allow-once '<command>'` in their own terminal, then you rerun it unchanged.")
+    msg += (" This harness cannot ask, so the command was blocked. Show the gate block and wait. Once the "
+            "operator approves and allows it from their own terminal, rerun the command unchanged. Never try to "
+            "allow, disable, or reconfigure the guard yourself.")
     if a.harness == "codex":
         print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
                                                  "permissionDecisionReason": msg}}))
@@ -738,6 +741,9 @@ def cmd_guard(a) -> int:
         return EXIT_OK
     if a.action == "allow-once":
         cmd = " ".join(a.command)
+        if not (sys.stdin.isatty() and sys.stdout.isatty()):
+            print("error: allow-once must be run by the operator in an interactive terminal", file=sys.stderr)
+            return EXIT_FAIL
         STATE_DIR.mkdir(parents=True, exist_ok=True)
         path = STATE_DIR / "guard-allow.json"
         tokens = json.loads(path.read_text()) if path.is_file() else {}

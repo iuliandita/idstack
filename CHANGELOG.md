@@ -18,7 +18,9 @@ The `idstack` CLI, the opt-in guard, and native subagents on Codex and OpenCode.
 - Opt-in guard for state-mutating infra commands (Terraform/OpenTofu, kubectl, Helm, ArgoCD, Flux,
   Ansible, Velero, Proxmox, libvirt, cloud CLIs, remote systemctl and reboot). Claude Code asks
   through the plugin hook; Codex blocks, with `idstack guard allow-once` for an approved command.
-  Off by default; `log` mode records without stopping. No OpenCode guard yet.
+  Off by default; `log` mode records without stopping. No OpenCode guard yet. The guard's own control
+  commands are guarded, and `allow-once` needs an interactive terminal, so an agent cannot approve
+  itself through the CLI.
 - `/idstack:setup` skill: doctor report, model files, guard mode and install, Jev.
 - Generated Codex agent TOML, OpenCode agents, and Codex skill policies
   (`idstack build`); `install.sh` links the agents and the CLI and removes them on uninstall.

@@ -5,6 +5,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -88,6 +89,9 @@ class GuardTest(unittest.TestCase):
             "qm destroy 100": True,
             "git push origin main": False,
             "grep -r 'kubectl delete' docs": False,
+            "idstack guard status": False,
+            "idstack guard allow-once kubectl delete pod x": True,
+            "python3 bin/idstack guard disable": True,
         }
         for cmd, match in cases.items():
             with self.subTest(cmd):
@@ -123,8 +127,11 @@ class GuardTest(unittest.TestCase):
 
     def test_allow_once(self):
         env = dict(os.environ, IDSTACK_STATE_DIR=self.state, IDSTACK_CONFIG_DIR=self.state)
-        subprocess.run([sys.executable, str(BIN), "guard", "allow-once", "kubectl", "delete", "pod", "x"],
-                       env=env, check=True, capture_output=True)
+        r = subprocess.run([sys.executable, str(BIN), "guard", "allow-once", "kubectl", "delete", "pod", "x"],
+                           env=env, capture_output=True, stdin=subprocess.DEVNULL)
+        self.assertEqual(r.returncode, 1, "allow-once must refuse without a terminal")
+        token = {idstack.cmd_hash("kubectl delete pod x"): time.time() + 60}
+        (Path(self.state) / "guard-allow.json").write_text(json.dumps(token))
         self.assertIsNone(self.hook("codex", "kubectl  delete pod x"))
         self.assertEqual(self.hook("codex", "kubectl delete pod x")["hookSpecificOutput"]["permissionDecision"], "deny")
 
