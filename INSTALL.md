@@ -113,35 +113,43 @@ The script writes the file for each selected harness from
 | `~/.claude/rules/pstack-models.md` | Claude Code, loaded into every session; written for `claude` |
 | `~/.agents/pstack-models.md` | Codex and OpenCode, read when pstack picks a model; written for `codex` or `opencode` |
 
-Roles route across providers. A value such as `gpt-6.1-terra medium via codex else sonnet medium`
-runs on Codex by the first route available: T3 Code's `delegate_task` when the session runs under
-T3, otherwise the provider's own CLI headless (`codex exec`, `claude -p`, or `opencode run`, read-only
-unless the role edits files), otherwise Sonnet with the harness's own subagent tool. When the
-named provider is the harness you are in, the role runs natively on that model. Values without
-`via` always run natively. The exact commands live in the `t3` section of the JSON and are copied
-into each file.
+Both files carry the same table, so every harness reads the same choices. Each role names a model
+on each provider and resolves to the best one this machine can reach, whether you run one, two, or
+all three harnesses:
 
-Codex and OpenCode share `~/.agents/pstack-models.md`, so every line there names its provider. From
-Codex, `gpt-6.1-sol high via codex` runs natively; from OpenCode, the same line goes to `codex exec`.
-DeepSeek Flash lines run natively in OpenCode and through `opencode run` elsewhere. When the `else`
-model is one the current harness cannot run, the role runs on the session's own model and says so.
+```text
+bug-fix: gpt-6.1-sol high via codex else claude-opus-5-5 high via claudeAgent else opencode-go/deepseek-v4.1-flash high via opencode
+hardest tasks: gpt-6.1-sol high via codex or claude-opus-5-5 high via claudeAgent else opencode-go/deepseek-v4.1-flash high via opencode
+```
+
+A provider is reachable when it is the harness you are in, when T3 Code's `delegate_task` offers it,
+or when its CLI is on PATH (`codex exec`, `claude -p`, or `opencode run`, read-only unless the role
+edits files; the exact commands come from the `t3` section of the JSON). The role takes the first
+reachable option, one `else` group at a time. Within an `or` group the option on your own harness
+wins, so "hardest tasks" runs Sol in Codex and Opus in Claude Code. A role with nothing reachable
+runs on the session's own model.
 
 A Codex session calling `claude -p` or `opencode run` needs network access in its sandbox; the
-default `workspace-write` sandbox blocks it, so those roles fall through to the native model there
-unless you allow network access.
+default `workspace-write` sandbox blocks it, so those options count as unreachable there unless you
+allow network access.
 
-| Role group | From Claude Code | From Codex |
-| --- | --- | --- |
-| Routine code, swarm workers | Terra via Codex, else Sonnet | Terra |
-| Bug fixes, performance | Sol via Codex, else Opus | Sol |
-| Exploration (`how`, `why` investigators) | DeepSeek Flash via OpenCode, else Haiku | DeepSeek Flash via OpenCode, else Luna |
-| Judgment and prose | Opus | Opus via Claude, else Sol |
-| Hardest tasks, synthesizers | Opus | Sol |
-| Review panels (arena, architect, interrogate) | Opus plus Sol via Codex | Sol plus Opus via Claude |
+The shipped table, by what you have installed:
 
-From OpenCode, the Codex column applies with each route reversed: Codex models through `codex exec`,
-Claude models through `claude -p`, DeepSeek Flash natively, and DeepSeek Flash as the fallback for
-Codex roles when the `codex` CLI is missing.
+| Role group | All three | Claude Code only | Codex only | OpenCode only |
+| --- | --- | --- | --- | --- |
+| Routine code, swarm workers | Terra | Sonnet | Terra | DeepSeek Flash |
+| Bug fixes, performance | Sol | Opus | Sol | DeepSeek Flash |
+| Exploration (`how`, `why` investigators) | DeepSeek Flash | Haiku | Luna | DeepSeek Flash |
+| Judgment and prose | Opus | Opus | Sol | DeepSeek Flash |
+| Hardest tasks, synthesizers | your harness's (Opus or Sol; Sol from OpenCode) | Opus | Sol | DeepSeek Flash |
+| Review panels (arena, architect, interrogate) | Opus plus Sol | Opus plus Sonnet | Terra plus Sol | DeepSeek Flash |
+
+With two of the three, each role takes the first of its options you have. To see what each role
+runs on your machine:
+
+```sh
+python3 scripts/pstack_models.py --resolve claude   # or codex, opencode: the harness you work in
+```
 
 ### Your own models
 
@@ -152,21 +160,24 @@ key by key, so one role is enough:
 
 ```json
 {
-  "claude": { "roles": { "hardest tasks": "sonnet high" } },
-  "agents": { "roles": { "swarm workers": "opencode-go/deepseek-v4.1-flash high via opencode else gpt-6-luna medium" } }
+  "roles": {
+    "hardest tasks": "claude-opus-5-5 high via claudeAgent else gpt-6.1-sol high via codex",
+    "swarm workers": "opencode-go/deepseek-v4.1-flash high via opencode else claude-sonnet-5-5 medium via claudeAgent"
+  }
 }
 ```
 
 Then rerun `./install.sh` (or `python3 scripts/pstack_models.py`). The file lives outside the clone,
 so updates keep it, and it goes through the same checks as the defaults; a misspelled top-level key
 fails instead of being ignored. `python3 scripts/pstack_models.py --show` prints the merged result.
+An override file from 0.4.0, with separate `claude` and `agents` sections, is rejected with a note
+to move its roles into one `roles` object.
 
 Effort starts at `medium` and goes to `high` only for hard roles; fast mode and the priority tier
-are off. Before writing, the script checks every role is present and every value parses. It checks
-Claude Code models against the names its subagents accept, Codex models and efforts against
+are off. Before writing, the script checks every role is present and every option parses. It checks
+Claude models against the list in the JSON, Codex models and efforts against
 `codex debug models` (only when Codex is signed in; signed out it lists an older bundled catalog),
-OpenCode models against `opencode models`, and T3 Claude models and DeepSeek Flash efforts against
-the lists in the JSON. A CLI that is missing or signed out is skipped with a warning.
+OpenCode models against `opencode models`, and DeepSeek Flash efforts against the list in the JSON. A CLI that is missing or signed out is skipped with a warning.
 
 Each file carries a `managed by idstack` line. The script replaces only files with that line. If
 you ran `/setup-pstack` yourself, it leaves your file alone and reports it; `--force` backs it up
