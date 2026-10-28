@@ -1,0 +1,19 @@
+{
+  "battery": "decommission-evidence",
+  "model": "jev-1.14.0",
+  "item_key": "evidence",
+  "rule": "any-above",
+  "threshold": 0.3,
+  "flag_means": "park, do not tear down",
+  "clear_means": "no change; low answers never prove disuse",
+  "questions": {
+    "still_in_use": {
+      "type": "noul",
+      "instructions": "Does `evidence.observation` show that `evidence.target` is still used by someone or something?",
+      "criteria": {
+        "true": "The observation shows recent use: traffic, logins, queries, connections, references from live config, jobs or dependents pointing at the target, or DNS lookups of its name.",
+        "false": "The observation shows no use, or is unrelated to the target."
+      }
+    }
+  }
+}

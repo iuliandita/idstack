@@ -1,0 +1,19 @@
+{
+  "battery": "outgoing-claims",
+  "model": "jev-1.14.0",
+  "item_key": "claim",
+  "rule": "any-below",
+  "threshold": 0.7,
+  "flag_means": "the claim is flagged for rewording before the operator sends",
+  "clear_means": "no change; the operator still approves every message",
+  "questions": {
+    "supported": {
+      "type": "noul",
+      "instructions": "Is the statement in `claim.text` fully supported by `claim.evidence`?",
+      "criteria": {
+        "true": "Every fact, number, cause, and completion claim in the sentence appears in or follows directly from the evidence.",
+        "false": "The sentence states something the evidence does not show, overstates it (for example 'fixed' when the evidence shows 'mitigated', 'all users' when the evidence shows one region), or gives a cause the evidence does not establish."
+      }
+    }
+  }
+}

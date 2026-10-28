@@ -1,0 +1,43 @@
+{
+  "battery": "dependency-bump",
+  "model": "jev-1.14.0",
+  "item_key": "note",
+  "rule": "any-above",
+  "threshold": 0.3,
+  "flag_means": "removes auto-merge eligibility; the bump goes to a gate",
+  "clear_means": "no change; eligibility still comes only from the deterministic policy",
+  "questions": {
+    "breaking": {
+      "type": "noul",
+      "instructions": "Does `note` describe a change that can break an existing installation that upgrades without changing anything?",
+      "criteria": {
+        "true": "Upgrading as-is can fail or behave differently: removed support, removed or renamed settings, changed defaults that alter behavior, required manual steps.",
+        "false": "Bug fixes, new optional features, documentation, deprecation warnings for a later release, or performance work."
+      }
+    },
+    "needs_operator_step": {
+      "type": "noul",
+      "instructions": "Does `note` say an operator must run a step (a command, data migration, or manual change) as part of upgrading?",
+      "criteria": {
+        "true": "The note names an action to perform before, during, or after the upgrade, including changing a setting to a new name or value.",
+        "false": "The upgrade needs no action from the operator."
+      }
+    },
+    "removes_setting": {
+      "type": "noul",
+      "instructions": "Does `note` say a configuration value, setting, or flag has been removed in this release?",
+      "criteria": {
+        "true": "A setting no longer exists in this release, with or without a replacement.",
+        "false": "No setting is removed in this release. A deprecation that announces a future removal is not a removal."
+      }
+    },
+    "renames_setting": {
+      "type": "noul",
+      "instructions": "Does `note` say a configuration value, setting, or flag now has a different name?",
+      "criteria": {
+        "true": "The same setting moved to a new name or path.",
+        "false": "No setting changes name."
+      }
+    }
+  }
+}

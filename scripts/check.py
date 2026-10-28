@@ -94,6 +94,42 @@ def check_installer(findings: list[str]) -> None:
         findings.append("install.sh: PSTACK_MIRROR_REF must be a full 40-character commit")
 
 
+def frontmatter_name(path: Path) -> str | None:
+    m = re.match(r"---\n(.*?)\n---\n", path.read_text(), re.S)
+    name = re.search(r"^name:\s*(\S+)\s*$", m.group(1), re.M) if m else None
+    return name.group(1) if name else None
+
+
+def check_skills(findings: list[str]) -> None:
+    for skill in sorted((ROOT / "skills").glob("*/SKILL.md")):
+        if frontmatter_name(skill) != skill.parent.name:
+            findings.append(f"{skill.relative_to(ROOT)}: frontmatter name must be {skill.parent.name}")
+    for agent in sorted((ROOT / "agents").glob("*.md")):
+        if frontmatter_name(agent) != agent.stem:
+            findings.append(f"{agent.relative_to(ROOT)}: frontmatter name must be {agent.stem}")
+
+    router = ROOT / "skills/id-mode"
+    text = (router / "SKILL.md").read_text()
+    listed = set(re.findall(r"^- \*\*([a-z-]+)\.\*\*", text, re.M))
+    overlay_line = re.search(r"^\*\*Overlays on pstack playbooks:\*\*(.*)$", text, re.M)
+    listed |= set(re.findall(r"`([a-z-]+)`", overlay_line.group(1))) if overlay_line else set()
+    files = {p.stem for p in (router / "playbooks").glob("*.md")}
+    for name in sorted(listed - files):
+        findings.append(f"skills/id-mode/SKILL.md: catalog lists {name} but playbooks/{name}.md is missing")
+    for name in sorted(files - listed):
+        findings.append(f"skills/id-mode/playbooks/{name}.md: not listed in the router catalog")
+
+    for path in sorted(router.rglob("*.md")) + sorted((ROOT / "agents").glob("*.md")):
+        body = path.read_text()
+        for ref in sorted(set(re.findall(r"references/([a-z-]+\.md)", body))):
+            if not (router / "references" / ref).exists():
+                findings.append(f"{path.relative_to(ROOT)}: references/{ref} does not exist")
+        batteries = {p.stem for p in (ROOT / "src/questions").glob("*.json")}
+        for battery in sorted(set(re.findall(r"idstack judge ([a-z-]+)", body)) - batteries - {"-"}):
+            if not battery.startswith("<"):
+                findings.append(f"{path.relative_to(ROOT)}: idstack judge {battery}: no src/questions/{battery}.json")
+
+
 def check_links(files: list[Path], findings: list[str]) -> None:
     link = re.compile(r"\]\(([^)#\s]+)(?:#[^)]*)?\)")
     for path in files:
@@ -132,6 +168,7 @@ def main() -> int:
     check_json_files(files, findings)
     check_manifests(findings)
     check_installer(findings)
+    check_skills(findings)
     check_links(files, findings)
     check_private_patterns(files, findings)
     if as_json:

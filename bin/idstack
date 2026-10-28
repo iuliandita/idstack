@@ -1,0 +1,879 @@
+#!/usr/bin/env python3
+"""idstack: helper CLI for the idstack playbooks. Standard library only.
+
+Commands:
+  plan-summary PLAN.json   deterministic Terraform/OpenTofu plan summary and grant predicate
+  judge BATTERY ITEMS      one Jev decision point; answers only tighten
+  doctor                   what is installed, missing, or able to write
+  check                    repository checks (scripts/check.py)
+  build                    generate Codex and OpenCode agent files and skill policies
+  guard                    opt-in pre-tool-use guard for infra commands
+
+Every command accepts --json for machine-readable output.
+"""
+from __future__ import annotations
+
+import argparse
+import fnmatch
+import fcntl
+import hashlib
+import json
+import os
+import re
+import shlex
+import shutil
+import subprocess
+import sys
+import time
+import tomllib
+import urllib.error
+import urllib.request
+from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+HOME = Path.home()
+JEV_URL = os.environ.get("IDSTACK_JEV_URL", "https://api.typesafe.ai/v1/systemone")
+STATE_DIR = Path(os.environ.get("IDSTACK_STATE_DIR") or Path(os.environ.get("XDG_STATE_HOME", HOME / ".local/state")) / "idstack")
+CONFIG_DIR = Path(os.environ.get("IDSTACK_CONFIG_DIR") or Path(os.environ.get("XDG_CONFIG_HOME", HOME / ".config")) / "idstack")
+
+EXIT_OK, EXIT_FAIL, EXIT_USAGE, EXIT_CALLS, EXIT_NO_KEY = 0, 1, 2, 3, 4
+
+
+def emit(data, as_json: bool, text: str) -> None:
+    print(json.dumps(data, indent=2) if as_json else text)
+
+
+# --- plan-summary ---------------------------------------------------------------------------
+
+STATEFUL = re.compile(r"(db_|database|_rds|bucket|storage|volume|disk|persistent_volume|snapshot|file_system|"
+                      r"filestore|efs|fsx|queue|topic|stream|table|dynamodb|redis|elasticache|memorystore|cosmosdb|"
+                      r"backup|kms_key|secret|_zone$|managed_zone)", re.I)
+IAM = re.compile(r"(iam|_role|role_|policy|binding|_member$|service_account|rbac|permission|grant|access_key|identity)", re.I)
+NOT_IAM = re.compile(r"(network_policy|firewall_policy|security_policy|lifecycle_policy|scaling_policy|backup_policy)", re.I)
+NETWORK = re.compile(r"(security_group|firewall|network_policy|network_acl|route|subnet|vpc|vnet|cidr|ingress|egress|"
+                     r"load_balancer|_lb|lb_|nat|peering|gateway|endpoint|_record$|dns|listener|target_group|tunnel|vpn)", re.I)
+EXPOSURE_ATTR = re.compile(r"(public|cidr|ingress|egress|source_ranges|allowed_ip|ip_range|firewall|security_group|"
+                           r"port|allowlist|whitelist|listen|authorized_networks)", re.I)
+IAM_ATTR = re.compile(r"(policy|role|iam|permission|acl|principal|grant|member|binding|service_account)", re.I)
+WORLD = re.compile(r"(0\.0\.0\.0/0|::/0)")
+
+
+def attr_flags(change: dict) -> tuple[bool, bool]:
+    """(iam, network) from the attributes a change touches, for resources whose type does not say."""
+    before, after = change.get("before") or {}, change.get("after") or {}
+    if not isinstance(before, dict) or not isinstance(after, dict):
+        return False, False
+    unknown = change.get("after_unknown") or {}
+    changed = {k for k in set(before) | set(after) | set(unknown)
+               if before.get(k) != after.get(k) or unknown.get(k)} if before else set()
+    newly_world = bool(WORLD.search(json.dumps(after))) and not WORLD.search(json.dumps(before))
+    public_on = any(after.get(k) is True and before.get(k) is not True for k in after if "public" in k.lower())
+    network = newly_world or public_on or any(EXPOSURE_ATTR.search(k) for k in changed)
+    iam = any(IAM_ATTR.search(k) for k in changed)
+    return iam, network
+
+
+def action_kind(actions: list[str]) -> str:
+    s = set(actions)
+    if s == {"delete", "create"}:
+        return "replace"
+    if len(actions) == 1:
+        return actions[0]
+    return "+".join(actions)
+
+
+def change_diff(change: dict) -> dict:
+    before, after = change.get("before") or {}, change.get("after") or {}
+    unknown = change.get("after_unknown") or {}
+    if not after:
+        return {"deleted": {k: before[k] for k in list(before)[:20]}}
+    diff = {}
+    for k in sorted(set(before) | set(after) | set(unknown)):
+        if before.get(k) != after.get(k) or unknown.get(k):
+            new = "(known after apply)" if unknown.get(k) is True else after.get(k)
+            diff[k] = {"before": before.get(k), "after": new} if before else new
+        if len(diff) >= 20:
+            break
+    text = json.dumps(diff)
+    return diff if len(text) <= 4000 else {"truncated": text[:4000]}
+
+
+def summarize_plan(plan: dict, scope: list[str], predicate: bool, allow_iam: bool = False,
+                   allow_network: bool = False) -> dict:
+    counts: dict[str, int] = {}
+    changes = []
+    for rc in plan.get("resource_changes", []):
+        change = rc.get("change", {})
+        kind = action_kind(change.get("actions", ["no-op"]))
+        if change.get("importing") and kind == "no-op":
+            kind = "import"
+        counts[kind] = counts.get(kind, 0) + 1
+        if kind in ("no-op", "read"):
+            continue
+        rtype, addr = rc.get("type", ""), rc.get("address", "")
+        attr_iam, attr_network = attr_flags(change)
+        changes.append({
+            "address": addr, "type": rtype, "action": kind,
+            "importing": bool(change.get("importing")),
+            "stateful": bool(STATEFUL.search(rtype)),
+            "iam": (bool(IAM.search(rtype)) and not NOT_IAM.search(rtype)) or attr_iam,
+            "network": bool(NETWORK.search(rtype)) or attr_network,
+            "in_scope": (not scope) or any(fnmatch.fnmatchcase(addr, p) for p in scope),
+            "diff": change_diff(rc.get("change", {})),
+        })
+    destructive = [c for c in changes if c["action"] in ("delete", "replace", "forget")]
+    out_of_scope = [c for c in changes if not c["in_scope"]]
+    unknown = [c for c in changes if c["action"] not in ("create", "update", "import", "delete", "replace", "forget")]
+    result = {
+        "counts": counts,
+        "changes": changes,
+        "destructive": [c["address"] for c in destructive],
+        "stateful": [c["address"] for c in changes if c["stateful"]],
+        "iam": [c["address"] for c in changes if c["iam"]],
+        "network": [c["address"] for c in changes if c["network"]],
+        "out_of_scope": [c["address"] for c in out_of_scope],
+        "errored": bool(plan.get("errored")),
+    }
+    if predicate:
+        reasons = []
+        if result["errored"]:
+            reasons.append("the plan errored")
+        if destructive:
+            reasons.append(f"{len(destructive)} delete, replace, or forget action(s)")
+        if out_of_scope:
+            reasons.append(f"{len(out_of_scope)} change(s) outside the scope")
+        if result["iam"] and not allow_iam:
+            reasons.append(f"{len(result['iam'])} IAM change(s); name them in the grant and pass --allow-iam")
+        if result["network"] and not allow_network:
+            reasons.append(f"{len(result['network'])} network change(s); name them in the grant and pass --allow-network")
+        if unknown:
+            reasons.append(f"{len(unknown)} change(s) with an unrecognized action")
+        if not plan.get("resource_changes") and not result["errored"]:
+            reasons.append("the plan has no resource_changes; is this a `show -json` of a saved plan?")
+        result["predicate"] = {"pass": not reasons, "reasons": reasons, "scope": scope}
+    return result
+
+
+def plan_summary_text(r: dict) -> str:
+    lines = ["counts: " + ", ".join(f"{k} {v}" for k, v in sorted(r["counts"].items())) or "counts: none"]
+    for label, key in (("delete/replace/forget", "destructive"), ("stateful", "stateful"), ("IAM", "iam"),
+                       ("network", "network"), ("outside scope", "out_of_scope")):
+        lines.append(f"{label}: " + (", ".join(r[key]) if r[key] else "none"))
+    if r["errored"]:
+        lines.append("plan errored: yes")
+    if "predicate" in r:
+        p = r["predicate"]
+        lines.append("predicate: " + ("PASS" if p["pass"] else "FAIL (" + "; ".join(p["reasons"]) + ")"))
+    return "\n".join(lines)
+
+
+def cmd_plan_summary(a) -> int:
+    try:
+        plan = json.loads(Path(a.plan).read_text() if a.plan != "-" else sys.stdin.read())
+    except (OSError, ValueError) as e:
+        print(f"error: cannot read plan JSON: {e}", file=sys.stderr)
+        return EXIT_USAGE
+    scope = list(a.scope or [])
+    if a.scope_file:
+        scope += [ln.strip() for ln in Path(a.scope_file).read_text().splitlines() if ln.strip() and not ln.startswith("#")]
+    r = summarize_plan(plan, scope, a.predicate, a.allow_iam, a.allow_network)
+    emit(r, a.json, plan_summary_text(r))
+    return EXIT_FAIL if a.predicate and not r["predicate"]["pass"] else EXIT_OK
+
+
+# --- judge ----------------------------------------------------------------------------------
+
+def load_battery(name: str) -> dict:
+    path = ROOT / "src/questions" / f"{name}.json"
+    if not re.fullmatch(r"[a-z0-9-]+", name) or not path.is_file():
+        known = sorted(p.stem for p in (ROOT / "src/questions").glob("*.json"))
+        raise SystemExit(f"error: unknown battery {name!r}; known: {', '.join(known)}")
+    return json.loads(path.read_text())
+
+
+def jev_ask(battery: dict, item, key: str, timeout: float = 30) -> tuple[dict | None, str | None, dict]:
+    body = {"model": battery["model"], "state": {battery["item_key"]: item}, "questions": battery["questions"]}
+    req = urllib.request.Request(JEV_URL, data=json.dumps(body).encode(), method="POST",
+                                 headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return json.loads(resp.read()), None, body
+    except (urllib.error.URLError, TimeoutError, ValueError, OSError) as e:
+        return None, str(e), body
+
+
+def jev_outcome(battery: dict, answers: dict | None) -> tuple[str, dict]:
+    raw = answers if isinstance(answers, dict) else {}
+    probs = {q: raw[q].get("noul") if isinstance(raw.get(q), dict) else None for q in battery["questions"]}
+    if answers is None or any(not isinstance(p, (int, float)) for p in probs.values()):
+        return "unsettled", probs
+    t, rule = battery["threshold"], battery["rule"]
+    strict = (lambda p: p < t) if rule == "any-below" else (lambda p: p > t)
+    if any(strict(p) for p in probs.values()):
+        return "flag", probs
+    if any(p == t for p in probs.values()):
+        return "unsettled", probs
+    return "clear", probs
+
+
+def judge_items(battery: dict, items: list, key: str, trace: Path | None) -> list[dict]:
+    def one(entry):
+        ident, item = entry
+        resp, err, body = jev_ask(battery, item, key)
+        outcome, probs = jev_outcome(battery, resp.get("answers") if resp else None)
+        if trace:
+            with trace.open("a") as fh:
+                fh.write(json.dumps({"battery": battery["battery"], "id": ident, "request": body,
+                                     "response": resp, "error": err}) + "\n")
+        return {"id": ident, "outcome": outcome, "answers": probs, "error": err}
+
+    with ThreadPoolExecutor(max_workers=8) as ex:
+        results = list(ex.map(one, items))
+    if battery["rule"] == "rank":
+        def score(r):
+            vals = [p for p in r["answers"].values() if isinstance(p, (int, float))]
+            return (r["outcome"] != "unsettled", -(max(vals) if vals else 1.0))
+        results.sort(key=score)
+    return results
+
+
+def normalize_items(raw) -> list[tuple[str, object]]:
+    if isinstance(raw, dict) and "items" in raw:
+        raw = raw["items"]
+    if not isinstance(raw, list):
+        raise SystemExit("error: items must be a JSON array, or an object with an `items` array")
+    out = []
+    for i, entry in enumerate(raw):
+        if isinstance(entry, dict) and "item" in entry:
+            out.append((str(entry.get("id", i)), entry["item"]))
+        else:
+            out.append((str(i), entry))
+    return out
+
+
+def cmd_judge(a) -> int:
+    battery = load_battery(a.battery)
+    if a.example:
+        cases = ROOT / "fixtures/jev" / battery["battery"] / "cases.jsonl"
+        first = next((json.loads(ln) for ln in cases.read_text().splitlines() if ln.strip()), None) if cases.is_file() else None
+        example = [{"id": "example-1", "item": first["item"] if first else "..."}]
+        emit({"battery": battery["battery"], "item_key": battery["item_key"], "questions": list(battery["questions"]),
+              "items": example}, a.json,
+             f"items for {battery['battery']}: a JSON array; each item is sent as state.{battery['item_key']}\n"
+             + json.dumps(example, indent=2))
+        return EXIT_OK
+    key = os.environ.get("TYPESAFE_API_KEY", "")
+    if not key:
+        msg = "TYPESAFE_API_KEY is not set; Jev was not used. Fall back to the deterministic checks."
+        emit({"used": False, "reason": msg}, a.json, f"jev not used: {msg}")
+        return EXIT_NO_KEY
+    trace = Path(a.trace) if a.trace else None
+    if a.eval:
+        return judge_eval(battery, key, a, trace)
+    if not a.items:
+        raise SystemExit("error: give an items file (or - for stdin), or --eval")
+    raw = json.loads(sys.stdin.read() if a.items == "-" else Path(a.items).read_text())
+    results = judge_items(battery, normalize_items(raw), key, trace)
+    lines = [f"battery {battery['battery']} ({battery['model']}, {battery['rule']} {battery['threshold']})",
+             f"flag means: {battery['flag_means']}", f"clear means: {battery['clear_means']}",
+             "unsettled counts as flag."]
+    for r in results:
+        ans = " ".join(f"{q}={p}" for q, p in r["answers"].items())
+        lines.append(f"  {r['outcome']:<9} {r['id']}  {ans}" + (f"  error: {r['error']}" if r["error"] else ""))
+    emit({"used": True, "battery": battery["battery"], "model": battery["model"], "results": results},
+         a.json, "\n".join(lines))
+    return EXIT_CALLS if any(r["error"] for r in results) else EXIT_OK
+
+
+def judge_eval(battery: dict, key: str, a, trace: Path | None) -> int:
+    cases_path = Path(a.cases) if a.cases else ROOT / "fixtures/jev" / battery["battery"] / "cases.jsonl"
+    cases = [json.loads(ln) for ln in cases_path.read_text().splitlines() if ln.strip()]
+    if a.split != "all":
+        cases = [c for c in cases if c.get("split") == a.split]
+    results = {r["id"]: r for r in judge_items(battery, [(c["id"], c["item"]) for c in cases], key, trace)}
+    report: dict[str, dict] = {}
+    for c in cases:
+        r = results[c["id"]]
+        got = "flag" if r["outcome"] in ("flag", "unsettled") else "clear"
+        bucket = report.setdefault(c.get("split", "tune"), {"n": 0, "fn": [], "fp": [], "unsettled": [], "errors": 0})
+        bucket["n"] += 1
+        bucket["errors"] += bool(r["error"])
+        if r["outcome"] == "unsettled":
+            bucket["unsettled"].append(c["id"])
+        if c["expected"] == "flag" and got == "clear":
+            bucket["fn"].append({"id": c["id"], "answers": r["answers"], "note": c.get("note", "")})
+        elif c["expected"] == "clear" and got == "flag":
+            bucket["fp"].append({"id": c["id"], "answers": r["answers"], "note": c.get("note", "")})
+    lines = [f"eval {battery['battery']} ({battery['model']}, {battery['rule']} {battery['threshold']})"]
+    for split, b in sorted(report.items()):
+        lines.append(f"  {split}: n={b['n']} false-negatives={len(b['fn'])} false-positives={len(b['fp'])} "
+                     f"unsettled={len(b['unsettled'])} call-errors={b['errors']}")
+        for kind in ("fn", "fp"):
+            for x in b[kind]:
+                lines.append(f"    {kind} {x['id']} {x['answers']}")
+    failed = bool(report.get("holdout", {}).get("fn")) or any(b["errors"] for b in report.values())
+    emit({"battery": battery["battery"], "report": report, "pass": not failed}, a.json, "\n".join(lines))
+    return EXIT_FAIL if failed else EXIT_OK
+
+
+# --- doctor ---------------------------------------------------------------------------------
+
+DOMAIN_SKILLS = ["terraform", "kubernetes", "kubernetes-health", "ansible", "networking", "opnsense-pfsense", "ci-cd",
+                 "docker", "observability", "security-audit", "virtualization", "databases", "message-queues",
+                 "debug-triage", "git", "jevify", "typesafe-ai"]
+INFRA_CLIS = ["terraform", "tofu", "kubectl", "helm", "kustomize", "kubeconform", "argocd", "flux", "ansible-playbook",
+              "ansible-lint", "conftest", "trivy", "gitleaks", "jq", "dig", "openssl", "gh", "glab"]
+
+
+def run_quiet(cmd: list[str], timeout: int = 20) -> tuple[int, str]:
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        return r.returncode, r.stdout
+    except (OSError, subprocess.SubprocessError) as e:
+        return 127, str(e)
+
+
+def skill_dirs() -> list[Path]:
+    dirs = [HOME / ".claude/skills", Path(os.environ.get("AGENTS_SKILLS_DIR", HOME / ".agents/skills")),
+            HOME / ".config/opencode/skills", HOME / ".codex/skills"]
+    dirs += list((HOME / ".claude/plugins/cache").glob("*/*/*/skills"))
+    return [d for d in dirs if d.is_dir()]
+
+
+def cmd_doctor(a) -> int:
+    checks: list[dict] = []
+
+    def add(name, status, detail=""):
+        checks.append({"name": name, "status": status, "detail": detail})
+
+    agents_skills = Path(os.environ.get("AGENTS_SKILLS_DIR", HOME / ".agents/skills"))
+    harnesses = [h for h in ("claude", "codex", "opencode") if shutil.which(h)]
+    add("harnesses", "ok" if harnesses else "fail", ", ".join(harnesses) or "none of claude, codex, opencode on PATH")
+    if "claude" in harnesses:
+        rc, out = run_quiet(["claude", "plugin", "list", "--json"], 60)
+        try:
+            ids = {p["id"]: p.get("enabled") for p in json.loads(out)} if rc == 0 else {}
+        except ValueError:
+            ids = {}
+        for pid in ("pstack@cursor-plugins", "idstack@idstack"):
+            add(f"claude {pid}", "ok" if ids.get(pid) else "fail", "enabled" if ids.get(pid) else "missing or disabled")
+    if "codex" in harnesses or "opencode" in harnesses:
+        ok = (agents_skills / "poteto-mode/SKILL.md").is_file()
+        add("pstack for codex/opencode", "ok" if ok else "fail", str(agents_skills / "poteto-mode"))
+    if "codex" in harnesses:
+        rc, out = run_quiet(["codex", "plugin", "list", "--json"], 60)
+        ok = rc == 0 and '"idstack@idstack"' in out
+        add("codex idstack@idstack", "ok" if ok else "fail", "installed" if ok else "missing")
+        agents_dir = Path(os.environ.get("CODEX_HOME", HOME / ".codex")) / "agents"
+        have = [n for n in ("id-agent", "plan-reader", "change-verifier") if (agents_dir / f"{n}.toml").is_file()]
+        add("codex idstack agents", "ok" if len(have) == 3 else "warn", f"{len(have)}/3 in {agents_dir}")
+    if "opencode" in harnesses:
+        oc = Path(os.environ.get("OPENCODE_SKILLS_DIR", HOME / ".config/opencode/skills"))
+        add("opencode id-mode skill", "ok" if (oc / "id-mode/SKILL.md").exists() else "fail", str(oc))
+    found = {p.name for d in skill_dirs() for p in d.iterdir() if (p / "SKILL.md").exists()}
+    missing = [s for s in DOMAIN_SKILLS if s not in found]
+    add("domain skills", "ok" if not missing else "warn",
+        "all found" if not missing else "missing (playbooks use fallbacks): " + ", ".join(missing))
+    absent = [c for c in INFRA_CLIS if not shutil.which(c)]
+    add("infra CLIs", "ok" if not absent else "warn", "all on PATH" if not absent else "not on PATH: " + ", ".join(absent))
+    add("jev key", "ok" if os.environ.get("TYPESAFE_API_KEY") else "warn",
+        "TYPESAFE_API_KEY set" if os.environ.get("TYPESAFE_API_KEY") else "not set; Jev decision points are skipped")
+    models = ROOT / "scripts/pstack_models.py"
+    if models.is_file():
+        rc, out = run_quiet([sys.executable, "-I", str(models), "--check"], 120)
+        add("pstack model files", "ok" if rc == 0 else "warn", " ".join(out.split())[:200])
+    g = guard_config()
+    add("guard", "ok", f"mode {g['mode']}" + ("" if g["mode"] != "off" else " (opt-in; enable with `idstack guard enable`)"))
+    if a.live:
+        if shutil.which("kubectl"):
+            rc, ctx = run_quiet(["kubectl", "config", "current-context"])
+            if rc == 0 and ctx.strip():
+                rc, out = run_quiet(["kubectl", "--context", ctx.strip(), "auth", "can-i", "create", "deployments", "--all-namespaces"])
+                can = out.strip() == "yes"
+                add("kube context write access", "warn" if can else "ok",
+                    f"{ctx.strip()}: " + ("can create deployments; prefer a read-only context for agents" if can else "read-only for deployments"))
+        else:
+            add("kube context write access", "skip", "kubectl not on PATH")
+    else:
+        add("credential write access", "skip", "run with --live to probe the active kube context (read-only check)")
+    bad = [c for c in checks if c["status"] == "fail"]
+    sym = {"ok": "ok  ", "warn": "warn", "fail": "FAIL", "skip": "skip"}
+    text = "\n".join(f"{sym[c['status']]}  {c['name']}: {c['detail']}" for c in checks)
+    emit({"ok": not bad, "checks": checks}, a.json, text)
+    return EXIT_FAIL if bad else EXIT_OK
+
+
+# --- check ----------------------------------------------------------------------------------
+
+def cmd_check(a) -> int:
+    script = ROOT / "scripts/check.py"
+    if not script.is_file():
+        print("error: scripts/check.py not found; run from an idstack checkout", file=sys.stderr)
+        return EXIT_USAGE
+    return subprocess.run([sys.executable, str(script), *(["--json"] if a.json else [])]).returncode
+
+
+# --- build ----------------------------------------------------------------------------------
+
+GENERATED = "Generated by `bin/idstack build` from {src}. Edit the source and rerun the build."
+SLASH_ONLY_SKILLS = ("id-mode", "setup")
+
+
+def parse_agent(path: Path) -> dict:
+    m = re.match(r"---\n(.*?)\n---\n(.*)", path.read_text(), re.S)
+    if not m:
+        raise SystemExit(f"error: {path} has no frontmatter")
+    meta = {}
+    for line in m.group(1).splitlines():
+        k, _, v = line.partition(":")
+        meta[k.strip()] = v.strip()
+    tools = [t.strip() for t in meta.get("tools", "").split(",") if t.strip()]
+    return {"name": meta["name"], "description": meta["description"], "tools": tools, "body": m.group(2).strip() + "\n"}
+
+
+def toml_str(s: str) -> str:
+    return json.dumps(s)
+
+
+def build_outputs() -> dict[Path, str]:
+    out: dict[Path, str] = {}
+    for src in sorted((ROOT / "agents").glob("*.md")):
+        ag = parse_agent(src)
+        rel = src.relative_to(ROOT).as_posix()
+        read_only = bool(ag["tools"]) and not {"Edit", "Write"} & set(ag["tools"])
+        body = ag["body"].replace('"""', '\\"\\"\\"')
+        if read_only:
+            body += "\nYou are read-only: never edit files or run a command that changes state.\n"
+        out[ROOT / "harness/codex/agents" / f"{ag['name']}.toml"] = (
+            f"# {GENERATED.format(src=rel)}\n"
+            f"name = {toml_str(ag['name'])}\n"
+            f"description = {toml_str(ag['description'])}\n"
+            f'developer_instructions = """\n{body}"""\n')
+        perm = ["permission:", "  edit: deny", "  bash: allow", "  webfetch: deny"] if read_only else []
+        out[ROOT / "harness/opencode/agents" / f"{ag['name']}.md"] = "\n".join([
+            "---", f"description: {toml_str(ag['description'])}", "mode: subagent", *perm, "---",
+            f"<!-- {GENERATED.format(src=rel)} -->", "", ag["body"]])
+    for skill in sorted((ROOT / "skills").glob("*/SKILL.md")):
+        name = skill.parent.name
+        implicit = "false" if name in SLASH_ONLY_SKILLS or name.startswith("principle-") else "true"
+        out[skill.parent / "agents/openai.yaml"] = (
+            f"# {GENERATED.format(src=skill.relative_to(ROOT).as_posix())}\n"
+            f"policy:\n  allow_implicit_invocation: {implicit}\n")
+    return out
+
+
+def cmd_build(a) -> int:
+    stale = []
+    for path, content in build_outputs().items():
+        current = path.read_text() if path.exists() else None
+        if current == content:
+            continue
+        stale.append(path.relative_to(ROOT).as_posix())
+        if not a.check:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(content)
+    verb = "stale" if a.check else "wrote"
+    emit({"check": a.check, verb: stale}, a.json,
+         "\n".join(f"{verb}: {p}" for p in stale) or "generated files are current")
+    return EXIT_FAIL if a.check and stale else EXIT_OK
+
+
+# --- guard ----------------------------------------------------------------------------------
+
+WRAPPERS = {"sudo", "doas", "env", "nice", "nohup", "time", "timeout", "command", "exec", "stdbuf", "ionice", "watch", "unbuffer"}
+WRAPPER_VALUE_FLAGS = {
+    "sudo": {"-u", "-g", "-h", "-p", "-C", "-D", "-r", "-t", "-U", "-T", "--user", "--group", "--host", "--prompt",
+             "--chdir", "--role", "--type", "--other-user", "--close-from", "--command-timeout"},
+    "doas": {"-u", "-C"},
+    "env": {"-u", "-C", "--unset", "--chdir"},
+    "nice": {"-n", "--adjustment"},
+    "timeout": {"-s", "-k", "--signal", "--kill-after"},
+    "ionice": {"-c", "-n", "-p", "-P", "-u", "--class", "--classdata", "--pid", "--pgid", "--uid"},
+    "watch": {"-n", "-d", "--interval", "--differences"},
+    "stdbuf": {"-i", "-o", "-e", "--input", "--output", "--error"},
+}
+SHELL_KEYWORDS = {"if", "then", "else", "elif", "fi", "do", "done", "while", "until", "{", "}", "!", "case", "esac"}
+INTERPRETERS = re.compile(r"(python[0-9.]*|uv|uvx|pipx|pdm|poetry)")
+SSH_VALUE_FLAGS = set("BbcDEeFIiJLlmOoPpQRSWw")
+SHELLS = {"bash", "sh", "zsh", "dash", "ksh", "script"}
+INFRA_HINT = re.compile(r"(terraform|tofu|kubectl|helm|argocd|flux|ansible|velero|aws|gcloud|az|doctl|qm|pct|pvesh|virsh|ssh)")
+
+
+def load_rules() -> list[dict]:
+    return tomllib.loads((ROOT / "src/guard/patterns.toml").read_text())["rule"]
+
+
+def split_segments(cmd: str) -> list[list[str]]:
+    cmd = re.sub(r"\\\r?\n", " ", cmd)
+    lex = shlex.shlex(cmd, posix=True, punctuation_chars=";&|()\n")
+    lex.whitespace = " \t\r"
+    lex.whitespace_split = True
+    lex.commenters = ""
+    try:
+        tokens = list(lex)
+    except ValueError:
+        tokens = re.split(r"[ \t]+|(?=[;&|\n])|(?<=[;&|\n])", cmd)
+    segs, cur = [], []
+    for t in tokens:
+        if not t:
+            continue
+        if set(t) <= set(";&|()\n"):
+            if cur:
+                segs.append(cur)
+            cur = []
+        else:
+            cur.append(t)
+    if cur:
+        segs.append(cur)
+    return segs
+
+
+def strip_wrappers(seg: list[str]) -> list[str]:
+    i = 0
+    while i < len(seg):
+        t = seg[i]
+        if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*=.*", t) or t in SHELL_KEYWORDS:
+            i += 1
+        elif os.path.basename(t) in WRAPPERS:
+            values = WRAPPER_VALUE_FLAGS.get(os.path.basename(t), set())
+            i += 1
+            while i < len(seg) and (seg[i].startswith("-") or re.fullmatch(r"[0-9.]+[smhd]?", seg[i])):
+                i += 2 if seg[i] in values else 1
+        else:
+            break
+    return seg[i:]
+
+
+def positionals(args: list[str], value_flags: set[str]) -> list[str]:
+    pos, skip = [], False
+    for t in args:
+        if skip:
+            skip = False
+            continue
+        if t.startswith("-"):
+            if "=" not in t and t in value_flags:
+                skip = True
+            continue
+        pos.append(t)
+    return pos
+
+
+def classify(cmd: str, rules: list[dict], remote: bool = False, depth: int = 0) -> list[dict]:
+    hits: list[dict] = []
+    if depth > 3:
+        return hits
+    for seg in split_segments(cmd):
+        seg = strip_wrappers(seg)
+        if not seg:
+            continue
+        tool, args = os.path.basename(seg[0]), seg[1:]
+        # idstack anywhere in argv (python3 -u bin/idstack, uv run idstack, ...) is the idstack tool.
+        if INTERPRETERS.fullmatch(tool):
+            at = next((j for j, t in enumerate(args[:6]) if os.path.basename(t) == "idstack"), None)
+            if at is not None:
+                tool, args = "idstack", args[at + 1:]
+        if tool in SHELLS and "-c" in args:
+            i = args.index("-c")
+            if i + 1 < len(args):
+                hits += classify(args[i + 1], rules, remote, depth + 1)
+            continue
+        if tool == "ssh":
+            i = 0
+            while i < len(args) and args[i].startswith("-"):
+                flag = args[i]
+                i += 2 if len(flag) == 2 and flag[1] in SSH_VALUE_FLAGS else 1
+            if i < len(args):
+                host, rest = args[i], args[i + 1:]
+                if rest:
+                    hits += [dict(h, remote=host) for h in classify(" ".join(rest), rules, True, depth + 1)]
+            continue
+        for rule in rules:
+            on_remote = remote or any(a.split("=")[0] in rule.get("remote_flags", []) for a in args)
+            if tool not in rule["tools"] or (rule.get("remote_only") and not on_remote):
+                continue
+            danger = next((a for a in args if a.split("=")[0] in rule.get("danger_flags", [])), None)
+            if danger:
+                hits.append({"tool": tool, "verb": danger, "reason": rule["reason"], "segment": " ".join(seg)[:300]})
+                continue
+            if set(rule.get("safe_flags", [])) & set(args):
+                continue
+            if rule.get("safe_modules"):
+                mod = args[args.index("-m") + 1] if "-m" in args and args.index("-m") + 1 < len(args) else "command"
+                if mod in rule["safe_modules"]:
+                    continue
+            pos = positionals(args, set(rule.get("value_flags", [])))
+            if rule.get("requires") and rule["requires"] not in pos:
+                continue
+            matched = None
+            if rule.get("any_verb_regex"):
+                rx = re.compile(rule["any_verb_regex"])
+                matched = next((p for p in pos if rx.search(p)), None)
+            else:
+                for verb in rule["verbs"]:
+                    words = verb.split()
+                    if pos[:len(words)] == words:
+                        matched = verb or tool
+                        break
+            if matched is not None:
+                hits.append({"tool": tool, "verb": matched, "reason": rule["reason"], "segment": " ".join(seg)[:300]})
+    return hits
+
+
+def is_ambiguous(cmd: str) -> bool:
+    for seg in split_segments(cmd):
+        seg = strip_wrappers(seg)
+        if not seg:
+            continue
+        tool = os.path.basename(seg[0])
+        if INFRA_HINT.fullmatch(tool) or tool in ("make", "just", "task") or seg[0].endswith(".sh") or seg[0].startswith("./"):
+            return True
+    return False
+
+
+def guard_config() -> dict:
+    cfg = {"mode": "off", "jev": False}
+    path = CONFIG_DIR / "guard.json"
+    if path.is_file():
+        try:
+            cfg.update(json.loads(path.read_text()))
+        except ValueError:
+            pass
+    if os.environ.get("IDSTACK_GUARD_MODE"):
+        cfg["mode"] = os.environ["IDSTACK_GUARD_MODE"]
+    if cfg["mode"] not in ("off", "log", "ask"):
+        cfg["mode"] = "ask"
+    return cfg
+
+
+def cmd_hash(cmd: str) -> str:
+    # Exact text: any change, even whitespace, needs a new approval.
+    return hashlib.sha256(cmd.encode()).hexdigest()
+
+
+def update_tokens(fn) -> object:
+    """Run fn(tokens) -> result under an exclusive lock on the allow-once file; fn mutates tokens."""
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    path = STATE_DIR / "guard-allow.json"
+    with (STATE_DIR / "guard-allow.lock").open("w") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        try:
+            tokens = json.loads(path.read_text()) if path.is_file() else {}
+        except ValueError:
+            tokens = {}
+        result = fn(tokens)
+        now = time.time()
+        path.write_text(json.dumps({k: v for k, v in tokens.items() if v > now}))
+        return result
+
+
+def consume_allow(cmd: str) -> bool:
+    h, now = cmd_hash(cmd), time.time()
+    return update_tokens(lambda tokens: tokens.pop(h, 0) > now)
+
+
+def guard_decide(cmd: str, cfg: dict) -> dict:
+    hits = classify(cmd, load_rules())
+    source = "rules"
+    if not hits and cfg.get("jev") and os.environ.get("TYPESAFE_API_KEY") and is_ambiguous(cmd):
+        battery = load_battery("guard-ambiguous")
+        resp, err, _ = jev_ask(battery, {"cmd": cmd, "cwd_hint": os.getcwd()}, os.environ["TYPESAFE_API_KEY"], timeout=5)
+        outcome, probs = jev_outcome(battery, resp.get("answers") if isinstance(resp, dict) else None)
+        if outcome != "clear":
+            source = "jev"
+            hits = [{"tool": "?", "verb": "?", "reason": f"Jev: {outcome} {probs}", "segment": cmd[:300]}]
+    return {"match": bool(hits), "hits": hits, "source": source}
+
+
+def guard_log(entry: dict) -> None:
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    with (STATE_DIR / "guard.log").open("a") as fh:
+        fh.write(json.dumps(entry) + "\n")
+
+
+def extract_command(payload: dict) -> str:
+    ti = payload.get("tool_input") or payload.get("args") or {}
+    cmd = ti.get("command") if isinstance(ti, dict) else None
+    if isinstance(cmd, list):
+        cmd = shlex.join(cmd)
+    return cmd or payload.get("command") or ""
+
+
+def guard_hook(a) -> int:
+    cfg = guard_config()
+    if cfg["mode"] == "off":
+        return EXIT_OK
+    try:
+        payload = json.loads(sys.stdin.read() or "{}")
+    except ValueError:
+        return EXIT_OK
+    cmd = extract_command(payload)
+    if not cmd:
+        return EXIT_OK
+    try:
+        d = guard_decide(cmd, cfg)
+    except Exception as e:  # fail closed: an error in the guard must not let the command through silently
+        d = {"match": True, "source": "error",
+             "hits": [{"tool": "?", "verb": "?", "reason": f"guard error ({type(e).__name__}: {e})", "segment": cmd[:300]}]}
+    if not d["match"]:
+        return EXIT_OK
+    reason = "; ".join(f"{h['tool']} {h['verb']}: {h['reason']}" for h in d["hits"])
+    entry = {"ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "harness": a.harness, "mode": cfg["mode"],
+             "cmd": cmd[:500], "reason": reason, "source": d["source"]}
+    if cfg["mode"] == "log":
+        guard_log(dict(entry, decision="logged"))
+        return EXIT_OK
+    msg = (f"idstack guard: state-mutating command ({reason}). Show a gate block per the id-mode "
+           f"references/gates.md and get the operator's approval for this exact command first.")
+    if a.harness == "claude":
+        guard_log(dict(entry, decision="ask"))
+        print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "ask",
+                                                 "permissionDecisionReason": msg}}))
+        return EXIT_OK
+    if consume_allow(cmd):
+        guard_log(dict(entry, decision="allowed-once"))
+        return EXIT_OK
+    guard_log(dict(entry, decision="deny"))
+    msg += (" This harness cannot ask, so the command was blocked. Show the gate block and wait. Once the "
+            "operator approves and allows it from their own terminal, rerun the command unchanged. Never try to "
+            "allow, disable, or reconfigure the guard yourself.")
+    if a.harness == "codex":
+        print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
+                                                 "permissionDecisionReason": msg}}))
+    else:
+        print(json.dumps({"decision": "deny", "reason": msg}))
+    return EXIT_OK
+
+
+def guard_install(a) -> int:
+    link = HOME / ".local/bin/idstack"
+    exe = str(link if link.exists() else ROOT / "bin/idstack")
+    if a.harness == "codex":
+        path = Path(os.environ.get("CODEX_HOME", HOME / ".codex")) / "hooks.json"
+        doc = json.loads(path.read_text()) if path.is_file() else {}
+        pre = doc.setdefault("hooks", {}).setdefault("PreToolUse", [])
+        ours = [g for g in pre if any("idstack guard hook" in h.get("command", "") for h in g.get("hooks", []))]
+        if a.uninstall:
+            for g in ours:
+                pre.remove(g)
+        elif not ours:
+            pre.append({"matcher": "Bash", "hooks": [{"type": "command",
+                                                      "command": f"{shlex.quote(exe)} guard hook --harness codex"}]})
+        if a.dry_run:
+            print(json.dumps(doc, indent=2))
+            return EXIT_OK
+        if path.is_file():
+            shutil.copy2(path, path.with_suffix(f".json.idstack-{time.strftime('%Y%m%dT%H%M%S')}.bak"))
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(doc, indent=2) + "\n")
+        print(f"{'removed from' if a.uninstall else 'wrote'} {path}" +
+              ("" if a.uninstall else "; open Codex and trust the hook with /hooks before it runs"))
+        return EXIT_OK
+    if a.uninstall:
+        print("nothing to remove: idstack installs no OpenCode guard")
+        return EXIT_OK
+    print("error: no OpenCode guard yet; OpenCode 2.x did not load it in testing. The id-mode gates still apply there.",
+          file=sys.stderr)
+    return EXIT_FAIL
+
+
+def cmd_guard(a) -> int:
+    if a.action == "hook":
+        return guard_hook(a)
+    if a.action == "test":
+        cmd = " ".join(a.command)
+        d = guard_decide(cmd, guard_config())
+        text = ("MATCH " + "; ".join(f"{h['tool']} {h['verb']}: {h['reason']}" for h in d["hits"])) if d["match"] else "no match"
+        emit(d, a.json, text)
+        return EXIT_OK
+    if a.action in ("enable", "disable"):
+        CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+        cfg = guard_config() if (CONFIG_DIR / "guard.json").is_file() else {"mode": "off", "jev": False}
+        cfg["mode"] = "off" if a.action == "disable" else a.mode
+        if a.jev is not None:
+            cfg["jev"] = a.jev == "on"
+        (CONFIG_DIR / "guard.json").write_text(json.dumps(cfg, indent=2) + "\n")
+        emit(cfg, a.json, f"guard mode {cfg['mode']}, jev {'on' if cfg['jev'] else 'off'} ({CONFIG_DIR / 'guard.json'})")
+        return EXIT_OK
+    if a.action == "status":
+        cfg = guard_config()
+        log = STATE_DIR / "guard.log"
+        recent = log.read_text().splitlines()[-5:] if log.is_file() else []
+        emit({"config": cfg, "recent": [json.loads(x) for x in recent]}, a.json,
+             f"mode {cfg['mode']}, jev {'on' if cfg['jev'] else 'off'}\n" + "\n".join(recent))
+        return EXIT_OK
+    if a.action == "allow-once":
+        cmd = " ".join(a.command)
+        if not (sys.stdin.isatty() and sys.stdout.isatty()):
+            print("error: allow-once must be run by the operator in an interactive terminal", file=sys.stderr)
+            return EXIT_FAIL
+        update_tokens(lambda tokens: tokens.__setitem__(cmd_hash(cmd), time.time() + a.ttl))
+        emit({"allowed": cmd, "ttl": a.ttl}, a.json, f"allowed once for {a.ttl}s: {cmd}")
+        return EXIT_OK
+    if a.action in ("install", "uninstall"):
+        a.uninstall = a.action == "uninstall"
+        return guard_install(a)
+    return EXIT_USAGE
+
+
+# --- main -----------------------------------------------------------------------------------
+
+def main() -> int:
+    ap = argparse.ArgumentParser(prog="idstack", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    sub = ap.add_subparsers(dest="cmd", required=True)
+
+    p = sub.add_parser("plan-summary", help="summarize a Terraform/OpenTofu plan JSON")
+    p.add_argument("plan", help="output of `show -json <planfile>`, or - for stdin")
+    p.add_argument("--scope", action="append", help="address glob inside the intended scope (repeatable)")
+    p.add_argument("--scope-file", help="file with one address glob per line")
+    p.add_argument("--predicate", action="store_true",
+                   help="check the grant predicate: no delete, replace, or forget; every change in scope; "
+                        "no IAM or network change unless allowed")
+    p.add_argument("--allow-iam", action="store_true", help="the grant names IAM changes")
+    p.add_argument("--allow-network", action="store_true", help="the grant names network changes")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(fn=cmd_plan_summary)
+
+    p = sub.add_parser("judge", help="run one Jev decision point")
+    p.add_argument("battery")
+    p.add_argument("items", nargs="?", help="JSON array of items, or - for stdin")
+    p.add_argument("--example", action="store_true", help="print the item shape this battery expects")
+    p.add_argument("--eval", action="store_true", help="run the battery's labeled cases instead")
+    p.add_argument("--cases", help="cases.jsonl path for --eval")
+    p.add_argument("--split", default="all", choices=("all", "tune", "holdout"))
+    p.add_argument("--trace", help="append each request and response as JSONL to this file")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(fn=cmd_judge)
+
+    p = sub.add_parser("doctor", help="report what is installed, missing, or able to write")
+    p.add_argument("--live", action="store_true", help="also probe the active kube context (read-only)")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(fn=cmd_doctor)
+
+    p = sub.add_parser("check", help="repository checks")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(fn=cmd_check)
+
+    p = sub.add_parser("build", help="generate Codex and OpenCode files")
+    p.add_argument("--check", action="store_true", help="fail if generated files are stale")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(fn=cmd_build)
+
+    p = sub.add_parser("guard", help="opt-in guard for state-mutating infra commands")
+    p.add_argument("action", choices=("hook", "test", "enable", "disable", "status", "allow-once", "install", "uninstall"))
+    p.add_argument("command", nargs="*",
+                   help="command for test or allow-once; quote it as one argument, since allow-once matches the exact text")
+    p.add_argument("--harness", choices=("claude", "codex", "opencode"), default="claude")
+    p.add_argument("--mode", choices=("log", "ask"), default="ask", help="mode for enable")
+    p.add_argument("--jev", choices=("on", "off"), help="ask Jev about ambiguous infra commands")
+    p.add_argument("--ttl", type=int, default=600, help="seconds an allow-once token lasts")
+    p.add_argument("--dry-run", action="store_true")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(fn=cmd_guard)
+
+    a = ap.parse_args()
+    return a.fn(a)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

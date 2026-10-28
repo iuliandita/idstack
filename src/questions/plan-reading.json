@@ -1,0 +1,27 @@
+{
+  "battery": "plan-reading",
+  "model": "jev-1.14.0",
+  "item_key": "resource",
+  "rule": "any-above",
+  "threshold": 0.3,
+  "flag_means": "fails a predicate grant; plan reading moves to the hardest-tasks model",
+  "clear_means": "no change; the grant still needs every deterministic check",
+  "questions": {
+    "holds_persistent_data": {
+      "type": "noul",
+      "instructions": "Does the resource in `resource` store persistent data that would be lost if it were destroyed?",
+      "criteria": {
+        "true": "The resource itself keeps data: a database, a storage bucket, a persistent volume or disk, a file share, a message queue with retained messages.",
+        "false": "The resource holds no data of its own: compute, networking, DNS records, IAM, generated values, or a placeholder."
+      }
+    },
+    "widens_iam": {
+      "type": "noul",
+      "instructions": "Does the change in `resource` give some identity more permissions than it had before?",
+      "criteria": {
+        "true": "After the change, a user, role, service account, or group can do more than before: new actions, broader resources, or a more powerful role. Network rules such as security groups, firewall rules, and CIDR ranges are not permissions.",
+        "false": "Permissions stay the same or shrink, the resource does not grant permissions, or the change is a network rule."
+      }
+    }
+  }
+}

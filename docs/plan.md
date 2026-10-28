@@ -417,6 +417,8 @@ Eval runs cost tokens, so they do not run per PR. pstack's `eval` playbook is th
 
 Each phase ends with a verifiable exit check.
 
+Status at v0.3.0: the artifacts of phases 1 through 5 ship (router, playbooks, principles, subagents, CLI, batteries with calibration in [jev-calibration.md](jev-calibration.md), guard, build generators, setup skill, Codex and OpenCode files). The dogfooding exits (real tasks, a real incident or game-day, an assurance pass on the homelab) and the nightly evals and pstack-tracking job are still open.
+
 **Phase 0: bootstrap.**
 Repo, license, this plan, CI skeleton (actionlint, zizmor, gitleaks, ASCII check), issue templates.
 Exit: CI green on an empty plugin. Plan approved.
