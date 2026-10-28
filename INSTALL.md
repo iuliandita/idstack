@@ -110,8 +110,9 @@ unless you allow network access.
 Effort starts at `medium` and goes to `high` only for hard roles; fast mode and the priority tier
 are off. Before writing, the script checks every role is present and every value parses. It checks
 Claude Code models against the names its subagents accept, Codex models and efforts against
-`codex debug models`, OpenCode models against `opencode models`, and T3 Claude models and
-DeepSeek Flash efforts against the lists in the JSON.
+`codex debug models` (only when Codex is signed in; signed out it lists an older bundled catalog),
+OpenCode models against `opencode models`, and T3 Claude models and DeepSeek Flash efforts against
+the lists in the JSON. A CLI that is missing or signed out is skipped with a warning.
 
 Each file carries a `managed by idstack` line. The script replaces only files with that line. If
 you ran `/setup-pstack` yourself, it leaves your file alone and reports it; `--force` backs it up

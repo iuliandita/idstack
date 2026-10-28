@@ -55,6 +55,9 @@ def catalog(cmd: list[str], parse) -> dict[str, set[str] | None] | None:
 
 
 def codex_catalog() -> dict[str, set[str] | None] | None:
+    # Signed out, codex lists only the catalog bundled with the CLI, which lags the account's models.
+    if catalog(["codex", "login", "status"], lambda out: out) is None:
+        return None
     return catalog(["codex", "debug", "models"], lambda out: {
         m["slug"]: {e["effort"] for e in m.get("supported_reasoning_levels", [])}
         for m in json.loads(out)["models"]
@@ -78,7 +81,7 @@ def validate(target: str, roles: dict[str, str], t3: dict) -> list[str]:
     }
     for name, cat in catalogs.items():
         if cat is None:
-            print(f"warning: {name} is not available; its model names were not checked", file=sys.stderr)
+            print(f"warning: {name} is not installed or not signed in; its model names were not checked", file=sys.stderr)
     native = "claude" if target == "claude" else "codex"
 
     def check(role: str, model: str, effort: str, provider: str) -> None:

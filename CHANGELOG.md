@@ -6,6 +6,11 @@ v0.x is the prerelease phase, where breaking changes are expected.
 
 ## Unreleased
 
+## [0.1.0] - 2026-10-28
+
+First prerelease: the installer, plugin manifests, model routing, CI, and docs. No idstack
+playbooks yet.
+
 ### Added
 
 - Design plan and playbook catalog (`docs/plan.md`, `docs/playbooks.md`).
