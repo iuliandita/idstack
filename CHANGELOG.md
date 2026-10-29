@@ -6,6 +6,15 @@ v0.x was the prerelease phase, where breaking changes were expected.
 
 ## [Unreleased]
 
+### Added
+
+- `install.sh --json` and `--json` on every `idstack` subcommand print one object with `ok` and
+  `errors` plus command keys, documented in INSTALL.md.
+
+### Changed
+
+- Usage errors in `idstack judge` exit 2, and error messages name the next step.
+
 ## [1.0.0] - 2026-10-28
 
 First stable release. idstack runs on Claude Code, Codex, and OpenCode, and under T3 Code on any of
