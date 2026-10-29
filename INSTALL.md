@@ -10,6 +10,7 @@
 - [Check, update, and channels](#check-update-and-channels)
 - [Uninstall](#uninstall)
 - [Recovery](#recovery)
+- [JSON output](#json-output)
 - [Environment and exit codes](#environment-and-exit-codes)
 
 ## Requirements
@@ -255,6 +256,34 @@ logs in `~/.local/state/idstack` stay; delete them by hand if you want. To remov
 - **Claude Code says the pstack dependency was not found.** Add the marketplace with
   `/plugin marketplace add cursor/plugins` and install again.
 - **A partial install.** Run `./install.sh --check` to see what is missing, then `./install.sh` again.
+
+## JSON output
+
+`install.sh` and every `idstack` subcommand accept `--json`. The command prints exactly one JSON
+object to stdout and nothing else there; human output goes to stderr. Exit codes are the same as
+without `--json`. Every object has `ok` (true when the exit code is 0) and `errors` (a list of
+strings, empty when `ok` is true), plus the keys below.
+
+| Command | Keys besides `ok` and `errors` |
+| --- | --- |
+| `install.sh` (every mode) | `warnings` (list of strings), `mode` (`install`, `dry-run`, `check`, `uninstall`), `dry_run`, `exit_code`, `source`, `harnesses` (list), `components` (with `--check`: objects with `name`, `state`, `detail`), `commands` (with `--dry-run`: the commands that would run) |
+| `idstack check` | none |
+| `idstack build` | `check`, and `stale` (with `--check`) or `wrote` (otherwise): lists of generated files |
+| `idstack doctor` | `checks`: objects with `name`, `status` (`ok`, `warn`, `fail`, `skip`), `detail` |
+| `idstack plan-summary` | `counts`, `changes`, `destructive`, `stateful`, `iam`, `network`, `out_of_scope`, `errored`, and `predicate` (`pass`, `reasons`, `scope`) with `--predicate`; `errors` holds the failed reasons |
+| `idstack judge BATTERY ITEMS` | `used`, `battery`, `model`, `results` (objects with `id`, `outcome`, `answers`, `error`) |
+| `idstack judge BATTERY --eval` | `battery`, `report` (per split), `pass` |
+| `idstack judge BATTERY --example` | `battery`, `item_key`, `questions`, `items` |
+| `idstack judge` without `TYPESAFE_API_KEY` | `used` (false), `reason`; exits 4 |
+| `idstack guard test` | `match`, `hits`, `source` |
+| `idstack guard enable`, `disable` | `mode`, `jev` |
+| `idstack guard status` | `config`, `recent` |
+| `idstack guard allow-once` | `allowed`, `ttl` |
+| `idstack guard install`, `uninstall` | `harness`, `path`, `uninstall`, `changed`, `dry_run` and `config` (with `--dry-run`) |
+
+`idstack guard hook` is the harness hook protocol. It reads and writes the harness's own JSON and
+has no `--json` flag. A usage error (an unknown option or battery) also prints
+`{"ok": false, "errors": [...]}` with `--json` and exits 2.
 
 ## Environment and exit codes
 

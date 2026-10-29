@@ -27,6 +27,12 @@ SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 FAILED=0
 MISSING=0
 CLEANUP=()
+JSON=0
+NOEMIT=0
+ERRORS=()
+WARNINGS=()
+COMPONENTS=()
+COMMANDS=()
 
 cleanup() {
   local path
@@ -34,7 +40,41 @@ cleanup() {
     rm -rf "$path"
   done
 }
-trap cleanup EXIT
+
+json_str() {
+  local s=$1
+  s=${s//\\/\\\\}
+  s=${s//\"/\\\"}
+  s=${s//$'\n'/\\n}
+  s=${s//$'\t'/\\t}
+  s=${s//$'\r'/\\r}
+  s=${s//[[:cntrl:]]/ }
+  printf '"%s"' "$s"
+}
+
+json_list() {
+  local out="" item
+  for item in "$@"; do out+="${out:+, }$(json_str "$item")"; done
+  printf '[%s]' "$out"
+}
+
+emit_json() {
+  local rc=$1 ok=false is_dry=false comps
+  case $rc in 0) ok=true ;; esac
+  case $MODE in dry-run) is_dry=true ;; esac
+  comps=$(IFS=,; printf '%s' "${COMPONENTS[*]}")
+  printf '{"ok": %s, "errors": %s, "warnings": %s, "mode": %s, "dry_run": %s, "exit_code": %s, "source": %s, "harnesses": %s, "components": [%s], "commands": %s}\n' \
+    "$ok" "$(json_list "${ERRORS[@]}")" "$(json_list "${WARNINGS[@]}")" "$(json_str "$MODE")" "$is_dry" "$rc" \
+    "$(json_str "$SOURCE")" "$(json_list "${HARNESSES[@]}")" "$comps" "$(json_list "${COMMANDS[@]}")"
+}
+
+finish() {
+  local rc=$?
+  cleanup
+  if [[ $JSON -eq 1 && $NOEMIT -eq 0 ]]; then emit_json "$rc" >&3; fi
+  exit "$rc"
+}
+trap finish EXIT
 
 usage() {
   cat <<'EOF'
@@ -54,6 +94,7 @@ Options:
   --force         Back up and replace existing skill folders that collide with
                   pstack skills, and pstack model files idstack did not write.
   --no-models     Leave pstack's per-role model files alone.
+  --json          Print one JSON object on stdout; human output goes to stderr.
   --uninstall     Remove idstack. pstack is left in place.
   -h, --help      Show this help.
 
@@ -78,11 +119,12 @@ EOF
 }
 
 log() { printf '%s\n' "$*"; }
-warn() { printf 'warning: %s\n' "$*" >&2; }
-err() { printf 'error: %s\n' "$*" >&2; }
+warn() { WARNINGS+=("$*"); printf 'warning: %s\n' "$*" >&2; }
+err() { ERRORS+=("$*"); printf 'error: %s\n' "$*" >&2; }
 
 run() {
   if [[ $MODE == dry-run ]]; then
+    COMMANDS+=("$(printf '%q ' "$@")")
     printf 'would run:'
     printf ' %q' "$@"
     printf '\n'
@@ -166,7 +208,8 @@ parse_args() {
         REF=$2; shift 2 ;;
       --force) FORCE=1; shift ;;
       --no-models) MODELS=0; shift ;;
-      -h|--help) usage; exit 0 ;;
+      --json) shift ;;
+      -h|--help) NOEMIT=1; if [[ $JSON -eq 1 ]]; then usage >&3; else usage; fi; exit 0 ;;
       *) err "unknown option: $1"; usage >&2; exit 2 ;;
     esac
   done
@@ -202,8 +245,10 @@ wants() {
 status() {
   # status <component> <state> [detail]
   printf '  %-28s %s%s\n' "$1" "$2" "${3:+ ($3)}"
+  COMPONENTS+=("{\"name\": $(json_str "$1"), \"state\": $(json_str "$2"), \"detail\": $(json_str "${3:-}")}")
   if [[ $2 != ok ]]; then
     MISSING=1
+    ERRORS+=("missing: $1 ($2)")
   fi
 }
 
@@ -608,6 +653,14 @@ models_step() {
 }
 
 main() {
+  local arg
+  for arg in "$@"; do
+    if [[ $arg == --json ]]; then
+      JSON=1
+      exec 3>&1 1>&2
+      break
+    fi
+  done
   parse_args "$@"
   need python3 git
   detect_harnesses
@@ -634,7 +687,7 @@ main() {
       wants codex && codex_check
       wants opencode && opencode_check
       cli_check
-      models_step --check || MISSING=1
+      models_step --check || { MISSING=1; ERRORS+=("missing: pstack model files"); }
       if [[ $MISSING -ne 0 ]]; then
         log "Something is missing. Run install.sh to fix it."
         exit 1

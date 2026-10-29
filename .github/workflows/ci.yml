@@ -112,12 +112,23 @@ jobs:
             exit 1
           fi
 
+      - name: Check --json reports missing before install
+        run: |
+          set +e
+          ./install.sh --harness claude,codex,opencode --source "$GITHUB_WORKSPACE" --check --json > check.json
+          rc=$?
+          set -e
+          test "$rc" -eq 1
+          python3 -c 'import json; d = json.load(open("check.json")); assert d["ok"] is False and d["errors"], d'
+
       - name: Install
         run: ./install.sh --harness claude,codex,opencode --source "$GITHUB_WORKSPACE"
 
       - name: Check after install
         run: |
           ./install.sh --harness claude,codex,opencode --source "$GITHUB_WORKSPACE" --check
+          ./install.sh --harness claude,codex,opencode --source "$GITHUB_WORKSPACE" --check --json > check.json
+          python3 -c 'import json; d = json.load(open("check.json")); assert d["ok"] is True and d["errors"] == [], d'
           "$IDSTACK_BIN_DIR/idstack" plan-summary fixtures/plans/create-only.plan.json --scope '*' --predicate
           test -L "$CODEX_HOME/agents/plan-reader.toml"
 

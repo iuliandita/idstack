@@ -45,13 +45,26 @@ CONFIG_DIR = Path(
 EXIT_OK, EXIT_FAIL, EXIT_USAGE, EXIT_CALLS, EXIT_NO_KEY = 0, 1, 2, 3, 4
 
 
-def emit(data, as_json: bool, text: str) -> None:
-    print(json.dumps(data, indent=2) if as_json else text)
+def emit(data, as_json: bool, text: str, ok: bool = True, errors: list[str] | None = None) -> None:
+    """Print text, or with --json exactly one object: ok, errors, then the command's own keys."""
+    print(json.dumps({"ok": ok, "errors": errors or [], **data}, indent=2) if as_json else text)
 
 
-def usage_error(msg: str) -> SystemExit:
+class CliError(Exception):
+    def __init__(self, msg: str, code: int):
+        super().__init__(msg)
+        self.code = code
+
+
+def usage_error(msg: str) -> CliError:
+    return CliError(msg, EXIT_USAGE)
+
+
+def fail(a, msg: str, code: int) -> int:
     print(f"error: {msg}", file=sys.stderr)
-    return SystemExit(EXIT_USAGE)
+    if getattr(a, "json", False):
+        emit({}, True, "", ok=False, errors=[msg])
+    return code
 
 
 # --- plan-summary ---------------------------------------------------------------------------
@@ -225,16 +238,16 @@ def cmd_plan_summary(a) -> int:
     try:
         plan = json.loads(Path(a.plan).read_text() if a.plan != "-" else sys.stdin.read())
     except (OSError, ValueError) as e:
-        print(f"error: cannot read plan JSON: {e}; pass a plan file or - for stdin", file=sys.stderr)
-        return EXIT_USAGE
+        return fail(a, f"cannot read plan JSON: {e}; pass a plan file or - for stdin", EXIT_USAGE)
     scope = list(a.scope or [])
     if a.scope_file:
         scope += [
             ln.strip() for ln in Path(a.scope_file).read_text().splitlines() if ln.strip() and not ln.startswith("#")
         ]
     r = summarize_plan(plan, scope, a.predicate, a.allow_iam, a.allow_network)
-    emit(r, a.json, plan_summary_text(r))
-    return EXIT_FAIL if a.predicate and not r["predicate"]["pass"] else EXIT_OK
+    failed = bool(a.predicate) and not r["predicate"]["pass"]
+    emit(r, a.json, plan_summary_text(r), ok=not failed, errors=r["predicate"]["reasons"] if failed else None)
+    return EXIT_FAIL if failed else EXIT_OK
 
 
 # --- judge ----------------------------------------------------------------------------------
@@ -343,14 +356,17 @@ def cmd_judge(a) -> int:
     key = os.environ.get("TYPESAFE_API_KEY", "")
     if not key:
         msg = "TYPESAFE_API_KEY is not set; Jev was not used. Fall back to the deterministic checks."
-        emit({"used": False, "reason": msg}, a.json, f"jev not used: {msg}")
+        emit({"used": False, "reason": msg}, a.json, f"jev not used: {msg}", ok=False, errors=[msg])
         return EXIT_NO_KEY
     trace = Path(a.trace) if a.trace else None
     if a.eval:
         return judge_eval(battery, key, a, trace)
     if not a.items:
         raise usage_error("no items given; pass an items file (or - for stdin), or --eval")
-    raw = json.loads(sys.stdin.read() if a.items == "-" else Path(a.items).read_text())
+    try:
+        raw = json.loads(sys.stdin.read() if a.items == "-" else Path(a.items).read_text())
+    except (OSError, ValueError) as e:
+        raise usage_error(f"cannot read items: {e}; pass a JSON array file or - for stdin") from e
     results = judge_items(battery, normalize_items(raw), key, trace)
     lines = [
         f"battery {battery['battery']} ({battery['model']}, {battery['rule']} {battery['threshold']})",
@@ -361,12 +377,15 @@ def cmd_judge(a) -> int:
     for r in results:
         ans = " ".join(f"{q}={p}" for q, p in r["answers"].items())
         lines.append(f"  {r['outcome']:<9} {r['id']}  {ans}" + (f"  error: {r['error']}" if r["error"] else ""))
+    call_errors = [f"{r['id']}: {r['error']}" for r in results if r["error"]]
     emit(
         {"used": True, "battery": battery["battery"], "model": battery["model"], "results": results},
         a.json,
         "\n".join(lines),
+        ok=not call_errors,
+        errors=call_errors,
     )
-    return EXIT_CALLS if any(r["error"] for r in results) else EXIT_OK
+    return EXIT_CALLS if call_errors else EXIT_OK
 
 
 def judge_eval(battery: dict, key: str, a, trace: Path | None) -> int:
@@ -398,7 +417,13 @@ def judge_eval(battery: dict, key: str, a, trace: Path | None) -> int:
             for x in b[kind]:
                 lines.append(f"    {kind} {x['id']} {x['answers']}")
     failed = bool(report.get("holdout", {}).get("fn")) or any(b["errors"] for b in report.values())
-    emit({"battery": battery["battery"], "report": report, "pass": not failed}, a.json, "\n".join(lines))
+    emit(
+        {"battery": battery["battery"], "report": report, "pass": not failed},
+        a.json,
+        "\n".join(lines),
+        ok=not failed,
+        errors=["eval failed: a holdout false negative or a call error"] if failed else None,
+    )
     return EXIT_FAIL if failed else EXIT_OK
 
 
@@ -579,7 +604,7 @@ def cmd_doctor(a) -> int:
     bad = [c for c in checks if c["status"] == "fail"]
     sym = {"ok": "ok  ", "warn": "warn", "fail": "FAIL", "skip": "skip"}
     text = "\n".join(f"{sym[c['status']]}  {c['name']}: {c['detail']}" for c in checks)
-    emit({"ok": not bad, "checks": checks}, a.json, text)
+    emit({"checks": checks}, a.json, text, ok=not bad, errors=[f"{c['name']}: {c['detail']}" for c in bad])
     return EXIT_FAIL if bad else EXIT_OK
 
 
@@ -589,8 +614,7 @@ def cmd_doctor(a) -> int:
 def cmd_check(a) -> int:
     script = ROOT / "scripts/check.py"
     if not script.is_file():
-        print("error: scripts/check.py not found: not an idstack checkout; run from a clone", file=sys.stderr)
-        return EXIT_USAGE
+        return fail(a, "scripts/check.py not found: not an idstack checkout; run from a clone", EXIT_USAGE)
     return subprocess.run([sys.executable, str(script), *(["--json"] if a.json else [])]).returncode
 
 
@@ -603,8 +627,7 @@ SLASH_ONLY_SKILLS = ("id-mode", "setup")
 def parse_agent(path: Path) -> dict:
     m = re.match(r"---\n(.*?)\n---\n(.*)", path.read_text(), re.S)
     if not m:
-        print(f"error: {path}: no frontmatter; start the file with a --- block", file=sys.stderr)
-        raise SystemExit(EXIT_FAIL)
+        raise CliError(f"{path}: no frontmatter; start the file with a --- block", EXIT_FAIL)
     meta = {}
     for line in m.group(1).splitlines():
         k, _, v = line.partition(":")
@@ -666,6 +689,8 @@ def cmd_build(a) -> int:
         {"check": a.check, verb: stale},
         a.json,
         "\n".join(f"{verb}: {p}" for p in stale) or "generated files are current",
+        ok=not (a.check and stale),
+        errors=[f"stale generated file: {p}; run `idstack build`" for p in stale] if a.check else None,
     )
     return EXIT_FAIL if a.check and stale else EXIT_OK
 
@@ -1086,12 +1111,12 @@ def guard_install(a) -> int:
         base = opencode_dir()
         path = guard_config_file("opencode")
         if not path.is_file() and (base / "opencode.jsonc").is_file():
-            print(
-                f'error: {base / "opencode.jsonc"} has comments; add {{"package": "{OPENCODE_GUARD}"}} '
+            return fail(
+                a,
+                f'{base / "opencode.jsonc"} has comments; add {{"package": "{OPENCODE_GUARD}"}} '
                 'to its "plugins" list by hand',
-                file=sys.stderr,
+                EXIT_FAIL,
             )
-            return EXIT_FAIL
         doc = json.loads(path.read_text()) if path.is_file() else {"$schema": "https://opencode.ai/config.json"}
         plugins = doc.setdefault("plugins", [])
         ours = [
@@ -1105,19 +1130,27 @@ def guard_install(a) -> int:
             plugins.append(want)
         note = "restart OpenCode to load it"
     else:
-        print("error: cannot install the guard for Claude Code: its plugin loads the hooks itself", file=sys.stderr)
-        return EXIT_USAGE
+        return fail(a, "cannot install the guard for Claude Code: its plugin loads the hooks itself", EXIT_USAGE)
+    result = {"harness": a.harness, "path": str(path), "uninstall": a.uninstall}
     if not changed:
-        print(f"nothing to remove from {path}" if a.uninstall else f"already in {path}")
+        emit(
+            {**result, "changed": False},
+            a.json,
+            f"nothing to remove from {path}" if a.uninstall else f"already in {path}",
+        )
         return EXIT_OK
     if a.dry_run:
-        print(json.dumps(doc, indent=2))
+        emit({**result, "changed": True, "dry_run": True, "config": doc}, a.json, json.dumps(doc, indent=2))
         return EXIT_OK
     if path.is_file():
         shutil.copy2(path, path.with_suffix(f".json.idstack-{time.strftime('%Y%m%dT%H%M%S')}.bak"))
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(doc, indent=2) + "\n")
-    print(f"removed from {path}" if a.uninstall else f"wrote {path}; {note}")
+    emit(
+        {**result, "changed": True, "dry_run": False},
+        a.json,
+        f"removed from {path}" if a.uninstall else f"wrote {path}; {note}",
+    )
     return EXIT_OK
 
 
@@ -1158,8 +1191,7 @@ def cmd_guard(a) -> int:
     if a.action == "allow-once":
         cmd = " ".join(a.command)
         if not (sys.stdin.isatty() and sys.stdout.isatty()):
-            print("error: cannot allow-once: no terminal; run it from an interactive shell", file=sys.stderr)
-            return EXIT_FAIL
+            return fail(a, "cannot allow-once: no terminal; run it from an interactive shell", EXIT_FAIL)
         update_tokens(lambda tokens: tokens.__setitem__(cmd_hash(cmd), time.time() + a.ttl))
         emit({"allowed": cmd, "ttl": a.ttl}, a.json, f"allowed once for {a.ttl}s: {cmd}")
         return EXIT_OK
@@ -1172,10 +1204,17 @@ def cmd_guard(a) -> int:
 # --- main -----------------------------------------------------------------------------------
 
 
+class Parser(argparse.ArgumentParser):
+    def error(self, message):
+        self.print_usage(sys.stderr)
+        print(f"{self.prog}: error: {message}", file=sys.stderr)
+        if "--json" in sys.argv:
+            emit({}, True, "", ok=False, errors=[message])
+        sys.exit(EXIT_USAGE)
+
+
 def main() -> int:
-    ap = argparse.ArgumentParser(
-        prog="idstack", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
-    )
+    ap = Parser(prog="idstack", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     p = sub.add_parser("plan-summary", help="summarize a Terraform/OpenTofu plan JSON")
@@ -1236,7 +1275,10 @@ def main() -> int:
     p.set_defaults(fn=cmd_guard)
 
     a = ap.parse_args()
-    return a.fn(a)
+    try:
+        return a.fn(a)
+    except CliError as e:
+        return fail(a, str(e), e.code)
 
 
 if __name__ == "__main__":
