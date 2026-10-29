@@ -10,6 +10,9 @@ v0.x was the prerelease phase, where breaking changes were expected.
 
 - `install.sh --json` and `--json` on every `idstack` subcommand print one object with `ok` and
   `errors` plus command keys, documented in INSTALL.md.
+- Vendored shared stack canon and checker under `.github/stack/`, run in the `lint` job, with a
+  weekly `stack-sync` workflow that opens an issue when the canon in agents moves.
+- `Environment` and `Exit codes` sections in every `idstack` subcommand `--help`.
 
 ### Changed
 

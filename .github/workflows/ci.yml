@@ -25,6 +25,9 @@ jobs:
       - name: Repo checks
         run: python3 scripts/check.py
 
+      - name: Stack conventions
+        run: python3 .github/stack/stack-check.py
+
       - name: Unit tests
         run: python3 -m unittest discover -s tests -v
 
