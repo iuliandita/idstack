@@ -49,6 +49,11 @@ def emit(data, as_json: bool, text: str) -> None:
     print(json.dumps(data, indent=2) if as_json else text)
 
 
+def usage_error(msg: str) -> SystemExit:
+    print(f"error: {msg}", file=sys.stderr)
+    return SystemExit(EXIT_USAGE)
+
+
 # --- plan-summary ---------------------------------------------------------------------------
 
 STATEFUL = re.compile(
@@ -220,7 +225,7 @@ def cmd_plan_summary(a) -> int:
     try:
         plan = json.loads(Path(a.plan).read_text() if a.plan != "-" else sys.stdin.read())
     except (OSError, ValueError) as e:
-        print(f"error: cannot read plan JSON: {e}", file=sys.stderr)
+        print(f"error: cannot read plan JSON: {e}; pass a plan file or - for stdin", file=sys.stderr)
         return EXIT_USAGE
     scope = list(a.scope or [])
     if a.scope_file:
@@ -239,7 +244,7 @@ def load_battery(name: str) -> dict:
     path = ROOT / "src/questions" / f"{name}.json"
     if not re.fullmatch(r"[a-z0-9-]+", name) or not path.is_file():
         known = sorted(p.stem for p in (ROOT / "src/questions").glob("*.json"))
-        raise SystemExit(f"error: unknown battery {name!r}; known: {', '.join(known)}")
+        raise usage_error(f"unknown battery {name!r}; use one of: {', '.join(known)}")
     return json.loads(path.read_text())
 
 
@@ -303,7 +308,7 @@ def normalize_items(raw) -> list[tuple[str, object]]:
     if isinstance(raw, dict) and "items" in raw:
         raw = raw["items"]
     if not isinstance(raw, list):
-        raise SystemExit("error: items must be a JSON array, or an object with an `items` array")
+        raise usage_error("items file is not a list; pass a JSON array, or an object with an `items` array")
     out = []
     for i, entry in enumerate(raw):
         if isinstance(entry, dict) and "item" in entry:
@@ -344,7 +349,7 @@ def cmd_judge(a) -> int:
     if a.eval:
         return judge_eval(battery, key, a, trace)
     if not a.items:
-        raise SystemExit("error: give an items file (or - for stdin), or --eval")
+        raise usage_error("no items given; pass an items file (or - for stdin), or --eval")
     raw = json.loads(sys.stdin.read() if a.items == "-" else Path(a.items).read_text())
     results = judge_items(battery, normalize_items(raw), key, trace)
     lines = [
@@ -584,7 +589,7 @@ def cmd_doctor(a) -> int:
 def cmd_check(a) -> int:
     script = ROOT / "scripts/check.py"
     if not script.is_file():
-        print("error: scripts/check.py not found; run from an idstack checkout", file=sys.stderr)
+        print("error: scripts/check.py not found: not an idstack checkout; run from a clone", file=sys.stderr)
         return EXIT_USAGE
     return subprocess.run([sys.executable, str(script), *(["--json"] if a.json else [])]).returncode
 
@@ -598,7 +603,8 @@ SLASH_ONLY_SKILLS = ("id-mode", "setup")
 def parse_agent(path: Path) -> dict:
     m = re.match(r"---\n(.*?)\n---\n(.*)", path.read_text(), re.S)
     if not m:
-        raise SystemExit(f"error: {path} has no frontmatter")
+        print(f"error: {path}: no frontmatter; start the file with a --- block", file=sys.stderr)
+        raise SystemExit(EXIT_FAIL)
     meta = {}
     for line in m.group(1).splitlines():
         k, _, v = line.partition(":")
@@ -1099,7 +1105,7 @@ def guard_install(a) -> int:
             plugins.append(want)
         note = "restart OpenCode to load it"
     else:
-        print("error: Claude Code loads the guard from the plugin's own hooks; nothing to install", file=sys.stderr)
+        print("error: cannot install the guard for Claude Code: its plugin loads the hooks itself", file=sys.stderr)
         return EXIT_USAGE
     if not changed:
         print(f"nothing to remove from {path}" if a.uninstall else f"already in {path}")
@@ -1152,7 +1158,7 @@ def cmd_guard(a) -> int:
     if a.action == "allow-once":
         cmd = " ".join(a.command)
         if not (sys.stdin.isatty() and sys.stdout.isatty()):
-            print("error: allow-once must be run by the operator in an interactive terminal", file=sys.stderr)
+            print("error: cannot allow-once: no terminal; run it from an interactive shell", file=sys.stderr)
             return EXIT_FAIL
         update_tokens(lambda tokens: tokens.__setitem__(cmd_hash(cmd), time.time() + a.ttl))
         emit({"allowed": cmd, "ttl": a.ttl}, a.json, f"allowed once for {a.ttl}s: {cmd}")
