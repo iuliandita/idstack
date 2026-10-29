@@ -318,6 +318,21 @@ class JevRuleTest(unittest.TestCase):
                 self.assertEqual(len({c["id"] for c in cases}), len(cases))
 
 
+class UsageErrorTest(unittest.TestCase):
+    def test_judge_usage_errors_exit_2_with_error_prefix(self):
+        for args in (["nope"], ["plan-reading"]):
+            with self.subTest(args=args):
+                r = subprocess.run(
+                    [sys.executable, str(BIN), "judge", *args],
+                    capture_output=True,
+                    text=True,
+                    env={**os.environ, "TYPESAFE_API_KEY": "x"},
+                )
+                self.assertEqual(r.returncode, 2, r.stderr)
+                self.assertTrue(r.stderr.startswith("error: "), r.stderr)
+                self.assertEqual(r.stdout, "")
+
+
 NODE_DRIVER = """
 const { default: plugin } = await import(process.argv[1]);
 let hook;

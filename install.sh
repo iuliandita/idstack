@@ -95,7 +95,7 @@ need() {
   local tool
   for tool in "$@"; do
     if ! command -v "$tool" >/dev/null 2>&1; then
-      err "missing required tool: $tool"
+      err "missing required tool: $tool; install it and rerun"
       exit 3
     fi
   done
@@ -617,7 +617,7 @@ main() {
       if [[ $h == opencode ]]; then
         warn "opencode is not on PATH; installing its skills anyway"
       else
-        err "$h was requested but its CLI is not on PATH"
+        err "$h CLI not found on PATH; install it or drop it from --harness"
         exit 3
       fi
     fi
