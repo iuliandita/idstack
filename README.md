@@ -1,17 +1,24 @@
-# idstack
+<h1><img src="assets/wordmark.png" alt="idstack" width="360"></h1>
 
 Infra, DevOps, and SRE playbooks for coding agents, layered on
-[pstack](https://github.com/cursor/plugins/tree/main/pstack).
+[pstack](https://github.com/cursor/plugins/tree/main/pstack). They cover plan before apply, pinned
+targets, restore proofs, and live-state checks.
 
 pstack gives agents a rigorous way to do software work. idstack adds what infra work needs and app
-work does not: plan before apply, pin the target before touching it, prove that backups restore,
-and never let a green check stand in for the live state.
+work does not. The installer writes to each harness's config and model files, and agents run with
+your permissions, so changes to live state stop at a gate.
 
-Status: stable since v1.0.0. The router, playbooks, principles, subagents, `idstack` CLI, opt-in
-guard, and setup skill ship on Claude Code, Codex, and OpenCode. Releases follow semver; `main` is
-the stable channel and `develop` the nightly. See the [roadmap](docs/plan.md#15-roadmap).
+Status: stable since v1.0.0. `main` is the stable channel and `develop` the nightly. The router,
+playbooks, principles, subagents, `idstack` CLI, opt-in guard, and setup skill ship on Claude Code,
+Codex, and OpenCode. See the [roadmap](docs/plan.md#15-roadmap).
 
 ## Install
+
+Set up with an agent: paste this into your coding agent.
+
+> Set up https://github.com/iuliandita/idstack for the coding agents I use, following its INSTALL.md.
+
+Or install by hand:
 
 ```sh
 git clone -b main https://github.com/iuliandita/idstack.git
@@ -252,14 +259,18 @@ idstack adds none of these and calls some of them from its playbooks.
 
 MIT
 
+## Part of the stack
+
+- [agents](https://github.com/iuliandita/agents): global prompts and subagent roles for every harness you use.
+- [skills](https://github.com/iuliandita/skills): task skills, installed one at a time. idstack calls them by name.
+- [mods](https://github.com/iuliandita/mods): hooks for Claude Code, Codex, and OpenCode, installed one at a time.
+- idstack: infra, DevOps, and SRE playbooks layered on pstack.
+
+Installing one does not install the others.
+
 ## Project and support
 
 Made by [iuliandita](https://iuliandita.com). [Other projects](https://iuliandita.com/projects/).
 
 See [installation and recovery](INSTALL.md), [contributing](CONTRIBUTING.md),
 [documentation](docs/README.md), and [private security reporting](SECURITY.md).
-
-[agents](https://github.com/iuliandita/agents) provides global prompts and role definitions;
-[skills](https://github.com/iuliandita/skills) provides the domain skills idstack calls by name;
-[mods](https://github.com/iuliandita/mods) provides Claude Code mods. Installing one collection
-does not install the others.

@@ -318,6 +318,97 @@ class JevRuleTest(unittest.TestCase):
                 self.assertEqual(len({c["id"] for c in cases}), len(cases))
 
 
+class UsageErrorTest(unittest.TestCase):
+    def test_judge_usage_errors_exit_2_with_error_prefix(self):
+        for args in (["nope"], ["plan-reading"]):
+            with self.subTest(args=args):
+                r = subprocess.run(
+                    [sys.executable, str(BIN), "judge", *args],
+                    capture_output=True,
+                    text=True,
+                    env={**os.environ, "TYPESAFE_API_KEY": "x"},
+                )
+                self.assertEqual(r.returncode, 2, r.stderr)
+                self.assertTrue(r.stderr.startswith("error: "), r.stderr)
+                self.assertEqual(r.stdout, "")
+
+
+class JsonContractTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp)
+        t = self.tmp
+        self.env = {
+            **os.environ,
+            "HOME": t,
+            "XDG_CONFIG_HOME": f"{t}/config",
+            "XDG_STATE_HOME": f"{t}/state",
+            "IDSTACK_CONFIG_DIR": f"{t}/idstack-config",
+            "IDSTACK_STATE_DIR": f"{t}/idstack-state",
+            "CLAUDE_CONFIG_DIR": f"{t}/claude",
+            "CODEX_HOME": f"{t}/codex",
+            "AGENTS_SKILLS_DIR": f"{t}/agents/skills",
+            "OPENCODE_SKILLS_DIR": f"{t}/opencode/skills",
+            "OPENCODE_AGENTS_DIR": f"{t}/opencode/agents",
+            "IDSTACK_CACHE_DIR": f"{t}/cache",
+            "IDSTACK_BIN_DIR": f"{t}/bin",
+            "TYPESAFE_API_KEY": "",
+        }
+
+    def run_json(self, argv, rc, extra, env=None):
+        r = subprocess.run(argv, capture_output=True, text=True, env=env or self.env, stdin=subprocess.DEVNULL)
+        if rc is None:  # doctor depends on which harnesses the host has
+            rc = r.returncode
+            self.assertIn(rc, (0, 1), r.stderr)
+        self.assertEqual(r.returncode, rc, r.stderr)
+        d = json.loads(r.stdout)
+        self.assertIsInstance(d["ok"], bool)
+        self.assertIsInstance(d["errors"], list)
+        self.assertEqual(d["ok"], rc == 0, d)
+        self.assertEqual(bool(d["errors"]), rc != 0, d)
+        for key in extra:
+            self.assertIn(key, d)
+        return d
+
+    def test_cli_commands(self):
+        plan = str(ROOT / "fixtures/plans/create-only.plan.json")
+        cases = [
+            (["check"], 0, []),
+            (["build", "--check"], 0, ["check", "stale"]),
+            (["plan-summary", plan], 0, ["counts", "changes"]),
+            (["plan-summary", plan, "--scope", "zzz", "--predicate"], 1, ["predicate"]),
+            (["plan-summary", f"{self.tmp}/missing.json"], 2, []),
+            (["judge", "plan-reading", "--example"], 0, ["battery", "items"]),
+            (["judge", "plan-reading"], 4, ["used", "reason"]),
+            (["judge", "nope"], 2, []),
+            (["guard", "test", "terraform apply"], 0, ["match", "hits"]),
+            (["guard", "enable"], 0, ["mode", "jev"]),
+            (["guard", "status"], 0, ["config", "recent"]),
+            (["guard", "install", "--harness", "opencode", "--dry-run"], 0, ["path", "changed", "config"]),
+            (["guard", "install", "--harness", "claude"], 2, []),
+            (["guard", "allow-once", "x"], 1, []),
+            (["guard", "nonsense"], 2, []),
+        ]
+        for argv, rc, extra in cases:
+            with self.subTest(argv=argv):
+                self.run_json([sys.executable, str(BIN), *argv, "--json"], rc, extra)
+
+    def test_doctor(self):
+        bare = {**self.env, "PATH": self.tmp}  # no harness CLIs, so the slow probes do not run
+        self.run_json([sys.executable, str(BIN), "doctor", "--json"], None, ["checks"], env=bare)
+
+    @unittest.skipUnless(shutil.which("bash") and shutil.which("git"), "bash and git needed")
+    def test_install_script(self):
+        base = ["bash", str(ROOT / "install.sh"), "--harness", "opencode", "--no-models", "--source", str(ROOT)]
+        missing = self.run_json([*base, "--check", "--json"], 1, ["mode", "components", "harnesses"])
+        self.assertEqual(missing["mode"], "check")
+        self.assertTrue(all({"name", "state", "detail"} <= set(c) for c in missing["components"]))
+        dry = self.run_json([*base, "--dry-run", "--json"], 0, ["commands", "dry_run"])
+        self.assertTrue(dry["dry_run"] and dry["commands"])
+        self.assertFalse(Path(self.env["OPENCODE_SKILLS_DIR"]).exists(), "--dry-run must not write")
+        self.run_json(["bash", str(ROOT / "install.sh"), "--bogus", "--json"], 2, ["mode"])
+
+
 NODE_DRIVER = """
 const { default: plugin } = await import(process.argv[1]);
 let hook;

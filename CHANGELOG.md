@@ -6,6 +6,38 @@ v0.x was the prerelease phase, where breaking changes were expected.
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-10-29
+
+### Added
+
+- `install.sh --json` and `--json` on every `idstack` subcommand print one object with `ok` and
+  `errors` plus command keys, documented in INSTALL.md.
+- Vendored shared stack canon and checker under `.github/stack/`, run in the `lint` job, with a
+  weekly `stack-sync` workflow that opens an issue when the canon in agents moves.
+- `Environment` and `Exit codes` sections in every `idstack` subcommand `--help`.
+- Wordmark and logo files in `assets/`.
+
+### Changed
+
+- Error messages name the next step to run.
+- README opens with the wordmark, an agent setup prompt, and a `Part of the stack` section.
+  CONTRIBUTING uses the shared headings and the version bump rule.
+- CI jobs are named after their ids (`lint`, `install`, `zizmor`, `secrets`, `publish`), and the
+  `install` job checks the `--json` output of `install.sh --check`.
+
+### Breaking
+
+- Usage errors in `idstack judge` exit 2 instead of 1: an unknown battery, an items file that is
+  not a JSON array or cannot be read, and a missing items argument. Scripts that test for exit 1 on
+  these should accept 2 and treat 1 as a runtime failure.
+- `idstack guard install` and `uninstall` print a JSON object with `--json`. Previously they
+  printed text, and `--dry-run` printed the bare config; with `--json` the config is under
+  `config`. Without `--json` the output is unchanged.
+- Every `--json` object now has top-level `ok` and `errors` keys, and the command's other keys
+  stay where they were. A failed `plan-summary` predicate, a `judge` call error, a failed
+  `build --check`, and a failed `doctor` check report `ok: false`; exit codes are unchanged.
+- Error message text changed. Scripts that match the old wording should check the exit code.
+
 ## [1.0.0] - 2026-10-28
 
 First stable release. idstack runs on Claude Code, Codex, and OpenCode, and under T3 Code on any of
@@ -179,7 +211,8 @@ playbooks yet.
   Code and Codex CLIs, security scanning, release workflow, issue and PR templates, and Dependabot
   for workflow actions and the pinned CLIs.
 
-[Unreleased]: https://github.com/iuliandita/idstack/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/iuliandita/idstack/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/iuliandita/idstack/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/iuliandita/idstack/compare/v0.5.0...v1.0.0
 [0.5.0]: https://github.com/iuliandita/idstack/compare/v0.4.1...v0.5.0
 [0.4.1]: https://github.com/iuliandita/idstack/compare/v0.4.0...v0.4.1

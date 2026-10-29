@@ -1,11 +1,11 @@
 # Contributing
 
 Open an issue before starting a bug fix or a substantial change, and reference it in the PR
-(`Closes #NN` for a completed fix). Branch from `develop`, keep changes small, and use
-conventional commit titles. PRs are squash-merged.
-Report suspected vulnerabilities through [SECURITY.md](SECURITY.md), not a public issue.
+(`Closes #NN` for a completed fix). Branch from `develop`, keep changes small, and preserve
+unrelated local settings. Report suspected vulnerabilities through [SECURITY.md](SECURITY.md), not a
+public issue.
 
-## Sources
+## Sources and generated files
 
 - `docs/plan.md` is the design. Change it in the same PR as any change that departs from it.
 - The three manifests (`plugin.json`, `.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json`)
@@ -15,13 +15,14 @@ Report suspected vulnerabilities through [SECURITY.md](SECURITY.md), not a publi
   it rejects unknown models.
 - `PSTACK_MIRROR_REF` in `install.sh` pins the pstack mirror for Codex and OpenCode. Move it only
   after running the installer against the new commit.
+- `harness/**` and `skills/*/agents/openai.yaml` are generated. After editing `agents/*.md` or a
+  skill, run `python3 bin/idstack build` and commit the result; never edit the generated files.
 
-## Checks
-
-Run these before opening a PR:
+## Checks and documentation
 
 ```sh
 python3 scripts/check.py
+python3 .github/stack/stack-check.py
 python3 -m unittest discover -s tests
 python3 bin/idstack build --check
 ruff check bin/idstack scripts tests
@@ -30,10 +31,8 @@ shellcheck install.sh
 claude plugin validate .
 ```
 
-`harness/**` and `skills/*/agents/openai.yaml` are generated. After editing `agents/*.md` or a
-skill, run `python3 bin/idstack build` and commit the result; never edit the generated files.
-
-`scripts/check.py` checks ASCII, JSON, manifest agreement, the mirror pin, the changelog, and
+Run these before opening a PR. `.github/stack/stack-check.py` checks the shared stack conventions;
+see [.github/stack/README.md](.github/stack/README.md). `scripts/check.py` checks ASCII, JSON, manifest agreement, the mirror pin, the changelog, and
 relative links. If `private-patterns.txt` exists (it is gitignored; copy
 `private-patterns.example.txt`), it also fails on any listed literal in a tracked file.
 
@@ -54,7 +53,9 @@ changes.
 
 ## Releases
 
-Feature and fix PRs target `develop` and are squash-merged. To release:
+Feature and fix PRs target `develop` and are squash-merged. The version bump follows the
+conventional-commit titles since the last tag: `feat` is minor, `fix` and `deps` are patch, `!` or
+`BREAKING CHANGE:` is major; `docs`, `chore`, `ci`, `test`, `style` alone do not release.
 
 1. On `develop`, bump the three manifests and move the `Unreleased` changelog entries under the new
    version, by PR.

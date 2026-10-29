@@ -1,0 +1,69 @@
+name: Stack sync
+
+on:
+  schedule:
+    - cron: "41 4 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: stack-sync
+  cancel-in-progress: false
+
+jobs:
+  stack-sync:
+    name: stack-sync
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Compare vendored canon with agents
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          BASE: https://raw.githubusercontent.com/iuliandita/agents/develop/.github/stack
+          TITLE: Stack canon is behind agents
+        run: |
+          set -euo pipefail
+          for f in canon.json stack-check.py; do
+            curl -fsSL --retry 3 -o "$RUNNER_TEMP/$f" "$BASE/$f"
+          done
+          upstream_canon=$(sha256sum "$RUNNER_TEMP/canon.json" | cut -d' ' -f1)
+          upstream_check=$(sha256sum "$RUNNER_TEMP/stack-check.py" | cut -d' ' -f1)
+          vendored_canon=$(sed -n 's/^canon\.json: sha256://p' .github/stack/SOURCE)
+          vendored_check=$(sed -n 's/^stack-check\.py: sha256://p' .github/stack/SOURCE)
+          if [ "$upstream_canon" = "$vendored_canon" ] && [ "$upstream_check" = "$vendored_check" ]; then
+            echo "Vendored stack canon matches agents develop."
+            exit 0
+          fi
+          {
+            echo "The vendored stack canon differs from iuliandita/agents on develop."
+            echo
+            echo "| File | Vendored (SOURCE) | agents develop |"
+            echo "|---|---|---|"
+            echo "| canon.json | \`$vendored_canon\` | \`$upstream_canon\` |"
+            echo "| stack-check.py | \`$vendored_check\` | \`$upstream_check\` |"
+            echo
+            echo "To re-vendor:"
+            echo
+            echo "1. Copy \`canon.json\` and \`stack-check.py\` unchanged from \`.github/stack/\` in agents into \`.github/stack/\` here."
+            echo "2. Run \`python3 .github/stack/stack-check.py --print-source <agents commit sha> > .github/stack/SOURCE\`."
+            echo "3. Run \`python3 .github/stack/stack-check.py\` and fix any new findings."
+            echo "4. Open a PR into \`develop\` and close this issue."
+          } > "$RUNNER_TEMP/body.md"
+          number=$(gh issue list --state open --search "\"$TITLE\" in:title" --json number,title \
+            --jq "[.[] | select(.title == \"$TITLE\")][0].number // empty")
+          if [ -n "$number" ]; then
+            gh issue edit "$number" --body-file "$RUNNER_TEMP/body.md"
+            echo "Updated issue #$number."
+          else
+            gh issue create --title "$TITLE" --body-file "$RUNNER_TEMP/body.md"
+          fi

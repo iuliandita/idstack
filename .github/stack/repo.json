@@ -1,0 +1,63 @@
+{
+  "repo": "idstack",
+  "required_jobs": [
+    "lint",
+    "install",
+    "secrets",
+    "zizmor"
+  ],
+  "installers": [
+    {
+      "argv": ["./install.sh", "--help"],
+      "flags": ["--harness", "--check", "--dry-run", "--source", "--ref", "--force", "--uninstall", "--json"]
+    },
+    {
+      "argv": ["python3", "bin/idstack", "plan-summary", "--help"],
+      "flags": ["--json"]
+    },
+    {
+      "argv": ["python3", "bin/idstack", "judge", "--help"],
+      "flags": ["--json"]
+    },
+    {
+      "argv": ["python3", "bin/idstack", "doctor", "--help"],
+      "flags": ["--json"]
+    },
+    {
+      "argv": ["python3", "bin/idstack", "check", "--help"],
+      "flags": ["--json"]
+    },
+    {
+      "argv": ["python3", "bin/idstack", "build", "--help"],
+      "flags": ["--check", "--json"]
+    },
+    {
+      "argv": ["python3", "bin/idstack", "guard", "--help"],
+      "flags": ["--harness", "--dry-run", "--json"]
+    }
+  ],
+  "error_scan": {
+    "paths": ["bin", "scripts", "harness"],
+    "exclude": []
+  },
+  "allow": [
+    {
+      "check": "private-patterns",
+      "path": "fixtures/jev/plan-reading/cases.jsonl",
+      "match": "private-ipv4",
+      "reason": "Labeled Jev cases use RFC 1918 example CIDR blocks as plan input."
+    },
+    {
+      "check": "private-patterns",
+      "path": "fixtures/jev/public-hygiene/cases.jsonl",
+      "match": "private-ipv4",
+      "reason": "The public-hygiene cases are labeled examples of private addresses the battery must flag."
+    },
+    {
+      "check": "private-patterns",
+      "path": "fixtures/jev/public-hygiene/cases.jsonl",
+      "match": "email",
+      "reason": "The public-hygiene cases are labeled examples of private addresses the battery must flag."
+    }
+  ]
+}
