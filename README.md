@@ -8,9 +8,9 @@ pstack gives agents a rigorous way to do software work. idstack adds what infra 
 work does not. The installer writes to each harness's config and model files, and agents run with
 your permissions, so changes to live state stop at a gate.
 
-Status: stable since v1.0.0. The router, playbooks, principles, subagents, `idstack` CLI, opt-in
-guard, and setup skill ship on Claude Code, Codex, and OpenCode. `main` is the stable channel and
-`develop` the nightly. See the [roadmap](docs/plan.md#15-roadmap).
+Status: stable since v1.0.0. `main` is the stable channel and `develop` the nightly. The router,
+playbooks, principles, subagents, `idstack` CLI, opt-in guard, and setup skill ship on Claude Code,
+Codex, and OpenCode. See the [roadmap](docs/plan.md#15-roadmap).
 
 ## Install
 

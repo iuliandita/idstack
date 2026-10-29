@@ -20,10 +20,9 @@ public issue.
 
 ## Checks and documentation
 
-Run these before opening a PR:
-
 ```sh
 python3 scripts/check.py
+python3 .github/stack/stack-check.py
 python3 -m unittest discover -s tests
 python3 bin/idstack build --check
 ruff check bin/idstack scripts tests
@@ -32,7 +31,8 @@ shellcheck install.sh
 claude plugin validate .
 ```
 
-`scripts/check.py` checks ASCII, JSON, manifest agreement, the mirror pin, the changelog, and
+Run these before opening a PR. `.github/stack/stack-check.py` checks the shared stack conventions;
+see [.github/stack/README.md](.github/stack/README.md). `scripts/check.py` checks ASCII, JSON, manifest agreement, the mirror pin, the changelog, and
 relative links. If `private-patterns.txt` exists (it is gitignored; copy
 `private-patterns.example.txt`), it also fails on any listed literal in a tracked file.
 
