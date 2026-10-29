@@ -16,6 +16,7 @@ concurrency:
 
 jobs:
   zizmor:
+    name: zizmor
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -31,6 +32,7 @@ jobs:
           annotations: true
 
   secrets:
+    name: secrets
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
