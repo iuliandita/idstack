@@ -1,5 +1,7 @@
+import contextlib
 import importlib.machinery
 import importlib.util
+import io
 import itertools
 import json
 import os
@@ -10,6 +12,7 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parent.parent
 BIN = ROOT / "bin/idstack"
@@ -536,6 +539,77 @@ class ModelRoutingTest(unittest.TestCase):
         for harness, role, want in cases:
             with self.subTest(harness=harness, role=role):
                 self.assertEqual(pstack_models.resolve(SHIPPED_ROLES[role], harness, everything)[0], want)
+
+    def test_validate_accepts_valid_and_rejects_bad_values(self):
+        t3 = {"claudeAgent": {"models": ["claude-x"], "efforts": {}}, "codex": {"efforts": {"gpt-b": ["high"]}}}
+        codex = {"gpt-a": {"medium", "high"}, "gpt-b": {"low", "high"}}
+        opencode = {"o/m": None}
+        base = dict.fromkeys(pstack_models.ROLES, "inherit-parent")
+        no_bug_fix = {k: v for k, v in base.items() if k != "bug-fix"}
+        ok = "gpt-a high via codex or claude-x medium via claudeAgent, o/m max via opencode, opus low, auto"
+        cases = [
+            ("valid", {**base, "bug-fix": ok}, codex, []),
+            (
+                "missing and unknown role",
+                {**no_bug_fix, "bogus": "auto"},
+                codex,
+                ["missing role 'bug-fix'", "unknown role 'bogus'"],
+            ),
+            (
+                "malformed option",
+                {**base, "bug-fix": "gpt-a"},
+                codex,
+                ["bug-fix: 'gpt-a' is not '<model> <effort> [via <provider>]'"],
+            ),
+            (
+                "unknown effort",
+                {**base, "bug-fix": "gpt-a turbo via codex"},
+                codex,
+                ["bug-fix: unknown effort 'turbo'"],
+            ),
+            (
+                "unknown provider",
+                {**base, "bug-fix": "gpt-a high via nope"},
+                codex,
+                ["bug-fix: unknown provider 'nope'"],
+            ),
+            (
+                "unknown model",
+                {**base, "bug-fix": "ghost high via codex"},
+                codex,
+                ["bug-fix: codex does not list model 'ghost'"],
+            ),
+            (
+                "effort not offered",
+                {**base, "bug-fix": "gpt-a low via codex"},
+                codex,
+                ["bug-fix: gpt-a does not support effort 'low'"],
+            ),
+            (
+                "t3 effort list wins over catalog",
+                {**base, "bug-fix": "gpt-b low via codex"},
+                codex,
+                ["bug-fix: gpt-b does not support effort 'low'"],
+            ),
+            (
+                "no via fails on every harness",
+                {**base, "bug-fix": "ghost high"},
+                codex,
+                [
+                    "bug-fix: Claude Code subagents do not take model 'ghost'; codex does not list model 'ghost'; "
+                    "opencode does not list model 'ghost'"
+                ],
+            ),
+            ("catalog unavailable skips the model check", {**base, "bug-fix": "ghost high via codex"}, None, []),
+        ]
+        for name, roles, codex_cat, want in cases:
+            with (
+                self.subTest(name),
+                mock.patch.object(pstack_models, "codex_catalog", return_value=codex_cat),
+                mock.patch.object(pstack_models, "opencode_catalog", return_value=opencode),
+                contextlib.redirect_stderr(io.StringIO()),
+            ):
+                self.assertEqual(pstack_models.validate(roles, t3), want)
 
 
 class ModelOverrideTest(unittest.TestCase):
