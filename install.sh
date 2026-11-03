@@ -3,7 +3,7 @@
 set -euo pipefail
 
 PSTACK_MIRROR_URL="https://github.com/backnotprop/pstack.git"
-PSTACK_MIRROR_REF="37d989cabf310ea2d7631f1d006117ca4cc8a799"
+PSTACK_MIRROR_REF="6c75f4e67546c2ddbf9634734c1e3ebbea34861a"
 CURSOR_MARKETPLACE="cursor/plugins"
 
 AGENTS_SKILLS_DIR="${AGENTS_SKILLS_DIR:-$HOME/.agents/skills}"

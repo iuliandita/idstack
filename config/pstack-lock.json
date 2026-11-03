@@ -7,8 +7,8 @@
   },
   "mirror": {
     "repo": "backnotprop/pstack",
-    "ref": "37d989cabf310ea2d7631f1d006117ca4cc8a799",
-    "version": "0.15.34"
+    "ref": "6c75f4e67546c2ddbf9634734c1e3ebbea34861a",
+    "version": "0.15.36"
   },
   "catalog": {
     "skills": [
