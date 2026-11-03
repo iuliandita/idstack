@@ -1,0 +1,54 @@
+name: pstack watch
+
+on:
+  schedule:
+    - cron: "23 */6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pstack-watch
+  cancel-in-progress: false
+
+jobs:
+  pstack-watch:
+    name: pstack-watch
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Compare pstack upstream and the mirror with the lock
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          GITHUB_TOKEN: ${{ github.token }}
+          TITLE: pstack changed upstream or the mirror pin is behind
+        run: |
+          set -uo pipefail
+          python3 scripts/pstack_watch.py --report "$RUNNER_TEMP/body.md"
+          rc=$?
+          if [ "$rc" -gt 1 ]; then
+            exit "$rc"
+          fi
+          number=$(gh issue list --state open --search "\"$TITLE\" in:title" --json number,title \
+            --jq "[.[] | select(.title == \"$TITLE\")][0].number // empty")
+          if [ "$rc" -eq 0 ]; then
+            if [ -n "$number" ]; then
+              gh issue close "$number" --comment "pstack, the mirror pin, and the lock agree again."
+            fi
+            exit 0
+          fi
+          if [ -n "$number" ]; then
+            gh issue edit "$number" --body-file "$RUNNER_TEMP/body.md"
+            echo "Updated issue #$number."
+          else
+            gh issue create --title "$TITLE" --body-file "$RUNNER_TEMP/body.md"
+          fi
