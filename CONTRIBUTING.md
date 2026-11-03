@@ -28,7 +28,10 @@ python3 bin/idstack build --check
 ruff check bin/idstack scripts tests
 ruff format --check bin/idstack scripts tests
 shellcheck install.sh
+actionlint
 claude plugin validate .
+markdownlint-cli2
+lychee --config lychee.toml --extensions md *.md agents docs skills src
 ```
 
 Run these before opening a PR. `.github/stack/stack-check.py` checks the shared stack conventions;

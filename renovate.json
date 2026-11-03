@@ -38,6 +38,17 @@
       "groupName": "harness",
       "semanticCommitType": "deps",
       "semanticCommitScope": "ci"
+    },
+    {
+      "matchManagers": [
+        "npm"
+      ],
+      "matchFileNames": [
+        ".github/tools/markdownlint/**"
+      ],
+      "groupName": "markdownlint",
+      "semanticCommitType": "deps",
+      "semanticCommitScope": "ci"
     }
   ]
 }
