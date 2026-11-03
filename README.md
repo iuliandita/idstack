@@ -105,6 +105,19 @@ everything else goes to pstack's, unchanged.
 Domain knowledge (how Terraform, Kubernetes, or Prometheus work) stays in separate domain skills.
 idstack holds the process. The design is in [docs/plan.md](docs/plan.md).
 
+## How it works
+
+```mermaid
+flowchart LR
+    task["task"] --> router["id-mode router"]
+    router -->|"infra"| idpb["idstack playbook"]
+    router -->|"everything else"| pspb["pstack playbook, unchanged"]
+    idpb --> change{"changes<br>live state?"}
+    change -->|"no: reads and<br>reversible writes"| go["proceed"]
+    change -->|"yes"| gate["gate: exact command, target,<br>blast radius, rollback, evidence"]
+    gate --> approve["you approve"]
+```
+
 ## What's inside
 
 What pstack ships (as of pstack 0.15.36) and what idstack adds. **Bold** rows come from idstack.
@@ -254,6 +267,28 @@ idstack adds none of these and calls some of them from its playbooks.
 | Claude Code | plugin from this repo's marketplace | `pstack@cursor-plugins`, installed as a declared dependency |
 | Codex | plugin from this repo's marketplace | the `backnotprop/pstack` mirror, pinned to one commit, in `~/.agents/skills` |
 | OpenCode | skills linked into `~/.config/opencode/skills` | the same pinned mirror in `~/.agents/skills` |
+
+## How the stack fits together
+
+Each repo installs on its own. idstack calls skills by name and sits on pstack.
+
+```mermaid
+flowchart LR
+    agents["agents<br>global rules, subagent roles"]
+    skills["skills<br>task skills"]
+    mods["mods<br>hooks and panels"]
+    idstack["idstack<br>infra playbooks"]
+    pstack["pstack"]
+    harness["your coding agent<br>Claude Code, Codex, OpenCode, ..."]
+    agents --> harness
+    skills --> harness
+    mods --> harness
+    idstack --> harness
+    idstack -->|"layered on"| pstack
+    idstack -.->|"calls by name"| skills
+    classDef self fill:#123A6B,stroke:#123A6B,color:#fff
+    class idstack self
+```
 
 ## License
 
