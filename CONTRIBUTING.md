@@ -15,6 +15,13 @@ public issue.
   it rejects unknown models.
 - `PSTACK_MIRROR_REF` in `install.sh` pins the pstack mirror for Codex and OpenCode. Move it only
   after running the installer against the new commit.
+- `config/pstack-lock.json` records the pstack version and commit idstack was last reconciled with,
+  the mirror pin, upstream's skill, playbook, and agent names, and the hash of each pstack file the
+  README or an overlay depends on. `scripts/check.py` fails when the README version, the pin, a
+  README name, or an overlay target disagrees with it. The `pstack watch` workflow runs
+  `scripts/pstack_watch.py --report` every six hours and keeps one issue open while upstream or
+  the mirror differs from the lock. After reconciling the README, overlays, and pin, run
+  `python3 scripts/pstack_watch.py --update-lock` and commit the result.
 - `harness/**` and `skills/*/agents/openai.yaml` are generated. After editing `agents/*.md` or a
   skill, run `python3 bin/idstack build` and commit the result; never edit the generated files.
 
