@@ -6,6 +6,12 @@ v0.x was the prerelease phase, where breaking changes were expected.
 
 ## [Unreleased]
 
+## [1.1.1] - 2026-11-03
+
+### Added
+
+- A weekly `pstack-watch` workflow opens an issue when upstream pstack or the mirror pin drifts from `config/pstack-lock.json`.
+
 ### Fixed
 
 - The pstack mirror pin in `install.sh` moves from pstack 0.15.34 to 0.15.36, so Codex and OpenCode
@@ -216,7 +222,8 @@ playbooks yet.
   Code and Codex CLIs, security scanning, release workflow, issue and PR templates, and Dependabot
   for workflow actions and the pinned CLIs.
 
-[Unreleased]: https://github.com/iuliandita/idstack/compare/v1.1.0...HEAD
+[Unreleased]: https://github.com/iuliandita/idstack/compare/v1.1.1...HEAD
+[1.1.1]: https://github.com/iuliandita/idstack/compare/v1.1.0...v1.1.1
 [1.1.0]: https://github.com/iuliandita/idstack/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/iuliandita/idstack/compare/v0.5.0...v1.0.0
 [0.5.0]: https://github.com/iuliandita/idstack/compare/v0.4.1...v0.5.0
