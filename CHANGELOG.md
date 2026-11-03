@@ -6,6 +6,11 @@ v0.x was the prerelease phase, where breaking changes were expected.
 
 ## [Unreleased]
 
+### Fixed
+
+- The pstack mirror pin in `install.sh` moves from pstack 0.15.34 to 0.15.36, so Codex and OpenCode
+  installs get the same pstack skills as Claude Code. `config/pstack-lock.json` records the new pin.
+
 ## [1.1.0] - 2026-10-29
 
 ### Added
