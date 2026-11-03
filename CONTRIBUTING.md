@@ -15,6 +15,13 @@ public issue.
   it rejects unknown models.
 - `PSTACK_MIRROR_REF` in `install.sh` pins the pstack mirror for Codex and OpenCode. Move it only
   after running the installer against the new commit.
+- `config/pstack-lock.json` records the pstack version and commit idstack was last reconciled with,
+  the mirror pin, upstream's skill, playbook, and agent names, and the hash of each pstack file the
+  README or an overlay depends on. `scripts/check.py` fails when the README version, the pin, a
+  README name, or an overlay target disagrees with it. The `pstack watch` workflow runs
+  `scripts/pstack_watch.py --report` every six hours and keeps one issue open while upstream or
+  the mirror differs from the lock. After reconciling the README, overlays, and pin, run
+  `python3 scripts/pstack_watch.py --update-lock` and commit the result.
 - `harness/**` and `skills/*/agents/openai.yaml` are generated. After editing `agents/*.md` or a
   skill, run `python3 bin/idstack build` and commit the result; never edit the generated files.
 
@@ -28,7 +35,10 @@ python3 bin/idstack build --check
 ruff check bin/idstack scripts tests
 ruff format --check bin/idstack scripts tests
 shellcheck install.sh
+actionlint
 claude plugin validate .
+markdownlint-cli2
+lychee --config lychee.toml --extensions md *.md agents docs skills src
 ```
 
 Run these before opening a PR. `.github/stack/stack-check.py` checks the shared stack conventions;
@@ -59,7 +69,7 @@ conventional-commit titles since the last tag: `feat` is minor, `fix` and `deps`
 
 1. On `develop`, bump the three manifests and move the `Unreleased` changelog entries under the new
    version, by PR.
-2. Open a PR from `develop` to `main` and merge it with a merge commit, never a squash, so `main`
-   stays an ancestor of `develop`.
+2. Open a PR from `develop` to `main` and merge it with a merge commit, never a squash, so every
+   `develop` commit stays in `main`'s history and the next release PR carries only new work.
 3. Tag the merge on `main` as `v<version>` and push the tag. The release workflow checks that the
    tag is on `main` and matches the manifests, then publishes the notes from the changelog.

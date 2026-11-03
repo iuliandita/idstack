@@ -99,6 +99,15 @@ def check_installer(findings: list[str]) -> None:
         findings.append("install.sh: PSTACK_MIRROR_REF must be a full 40-character commit")
 
 
+def check_pstack(findings: list[str]) -> None:
+    import pstack_watch
+
+    if not pstack_watch.LOCK.exists():
+        findings.append("config/pstack-lock.json: missing; run scripts/pstack_watch.py --update-lock")
+        return
+    findings.extend(pstack_watch.check_offline(json.loads(pstack_watch.LOCK.read_text())))
+
+
 def frontmatter_name(path: Path) -> str | None:
     m = re.match(r"---\n(.*?)\n---\n", path.read_text(), re.S)
     name = re.search(r"^name:\s*(\S+)\s*$", m.group(1), re.M) if m else None
@@ -172,6 +181,7 @@ def main() -> int:
     check_json_files(files, findings)
     check_manifests(findings)
     check_installer(findings)
+    check_pstack(findings)
     check_skills(findings)
     check_links(files, findings)
     check_private_patterns(files, findings)

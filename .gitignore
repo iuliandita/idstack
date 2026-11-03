@@ -1,7 +1,6 @@
 # private agent context
-/AGENTS.md
-/CLAUDE.md
 AGENTS.local.md
+CLAUDE.local.md
 .claude/
 .handoff/
 docs/local/
