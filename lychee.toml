@@ -12,5 +12,7 @@ exclude = [
   "^http://169\\.254\\.169\\.254",
   "^https?://(?:[A-Za-z0-9-]+\\.)?example\\.(?:com|org)",
   "^https?://claude\\.ai",
+  # CISA KEV catalog cited in docs/plan.md; loads in a browser, 403 to scripted clients.
+  "^https://www\\.cisa\\.gov/",
   "^https://github\\.com/iuliandita/idstack/compare/v[0-9]+\\.[0-9]+\\.[0-9]+\\.\\.\\.(?:v[0-9]+\\.[0-9]+\\.[0-9]+|HEAD)$"
 ]
