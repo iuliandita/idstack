@@ -6,6 +6,11 @@ v0.x was the prerelease phase, where breaking changes were expected.
 
 ## [Unreleased]
 
+### Fixed
+
+- id-mode routes broker work to `backend-api` and app performance to `debug-triage`; skills v4.0.0
+  retired `message-queues` and folded `performance-debugging` into `debug-triage`.
+
 ## [1.1.1] - 2026-11-03
 
 ### Added

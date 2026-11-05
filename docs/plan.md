@@ -203,7 +203,7 @@ The full spec for each playbook is in [playbooks.md](playbooks.md). This is the 
 
 ### Not used for infra
 
-`visual-parity`, `perf-issue` (use `performance-debugging` for apps), `hillclimb`, `trace-forensics`, `prototype` (infra prototypes are a scratch namespace or a throwaway VM, covered inside `upgrade` and `restore-drill`).
+`visual-parity`, `perf-issue` (use `debug-triage` for apps), `hillclimb`, `trace-forensics`, `prototype` (infra prototypes are a scratch namespace or a throwaway VM, covered inside `upgrade` and `restore-drill`).
 
 ## 7. Subagents and model routing
 
