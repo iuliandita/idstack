@@ -442,7 +442,7 @@ DOMAIN_SKILLS = [
     "security-audit",
     "virtualization",
     "databases",
-    "message-queues",
+    "backend-api",
     "debug-triage",
     "git",
     "jevify",

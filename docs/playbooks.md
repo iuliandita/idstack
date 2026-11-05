@@ -129,7 +129,7 @@ Owner line: you own the path back. Upgrade one unit, prove it, then the next.
 8. For managed services: provider maintenance window, provider backup, then upgrade.
 9. When another agent owns the target environment, emit a handoff prompt for that agent instead of acting.
 
-Calls: **kubernetes**, **virtualization**, **databases**, **message-queues**, the matching OS skill.
+Calls: **kubernetes**, **virtualization**, **databases**, **backend-api**, the matching OS skill.
 Principles: reversible-first, prove-the-restore, sequence-verifiable-units.
 Reply: units upgraded, health between each, rollback readiness, held units.
 
