@@ -10,6 +10,9 @@ v0.x was the prerelease phase, where breaking changes were expected.
 
 - id-mode routes broker work to `backend-api` and app performance to `debug-triage`; skills v4.0.0
   retired `message-queues` and folded `performance-debugging` into `debug-triage`.
+- Headless model-role runner templates set `IULIANDITA_MODS_NOTIFY=off`, so `claude -p`,
+  `codex exec` and `opencode run` children no longer pop desktop notifications through the mods
+  `notify` mod.
 
 ## [1.1.1] - 2026-11-03
 
