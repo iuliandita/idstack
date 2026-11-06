@@ -3,8 +3,8 @@
     "codex": {
       "option": "reasoningEffort",
       "cli": {
-        "read": "codex exec -m {model} -c model_reasoning_effort={effort} -s read-only --skip-git-repo-check --ephemeral \"<brief>\"",
-        "write": "codex exec -m {model} -c model_reasoning_effort={effort} -s workspace-write --skip-git-repo-check --ephemeral \"<brief>\""
+        "read": "env IULIANDITA_MODS_NOTIFY=off codex exec -m {model} -c model_reasoning_effort={effort} -s read-only --skip-git-repo-check --ephemeral \"<brief>\"",
+        "write": "env IULIANDITA_MODS_NOTIFY=off codex exec -m {model} -c model_reasoning_effort={effort} -s workspace-write --skip-git-repo-check --ephemeral \"<brief>\""
       }
     },
     "claudeAgent": {
@@ -15,8 +15,8 @@
         "claude-haiku-5-5"
       ],
       "cli": {
-        "read": "claude -p --model {model} --effort {effort} --permission-mode plan --no-session-persistence \"<brief>\"",
-        "write": "claude -p --model {model} --effort {effort} --permission-mode acceptEdits --no-session-persistence \"<brief>\""
+        "read": "env IULIANDITA_MODS_NOTIFY=off claude -p --model {model} --effort {effort} --permission-mode plan --no-session-persistence \"<brief>\"",
+        "write": "env IULIANDITA_MODS_NOTIFY=off claude -p --model {model} --effort {effort} --permission-mode acceptEdits --no-session-persistence \"<brief>\""
       }
     },
     "opencode": {
@@ -29,8 +29,8 @@
         ]
       },
       "cli": {
-        "read": "opencode run --agent plan -m {model}#{effort} \"<brief>\"",
-        "write": "opencode run -m {model}#{effort} --auto \"<brief>\""
+        "read": "env IULIANDITA_MODS_NOTIFY=off opencode run --agent plan -m {model}#{effort} \"<brief>\"",
+        "write": "env IULIANDITA_MODS_NOTIFY=off opencode run -m {model}#{effort} --auto \"<brief>\""
       }
     }
   },
