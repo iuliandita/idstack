@@ -16,7 +16,7 @@ Playbooks name domain skills in bold. Load a named skill when the step needs its
 | **security-audit** | Secrets, IAM, supply chain, CVEs | `gitleaks git --redact`, `trivy image`, the advisory text |
 | **virtualization** | Proxmox, KVM, libvirt, VM backups | `qm list`, `pct list`, `pvesh get`, `virsh list --all` (read verbs only) |
 | **databases** | Engines, dumps, restores, upgrades | The engine's own dump and restore tools against a scratch instance |
-| **message-queues** | Kafka, RabbitMQ, lag, replay | The broker's CLI or management API, read-only |
+| **backend-api** | API contracts, queue delivery: acks, dead letters, replay | The OpenAPI spec; for brokers, their CLI or management API, read-only |
 | **debug-triage** | Localizing a live fault | Bisect by layer per the `live-diagnosis` playbook |
 | **git** | Branches, rebases, PRs and MRs, forges | `git`, `gh`, `glab` |
 | **arch-linux**, **debian-ubuntu**, **rhel-fedora**, **nixos** | The target host's OS | The distro's package manager docs and `/etc/os-release` |

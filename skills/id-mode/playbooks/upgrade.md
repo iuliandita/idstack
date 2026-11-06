@@ -17,7 +17,7 @@ For a version upgrade of a cluster, platform component, managed service, hypervi
 
 Never: start without a written rollback, move to the next unit before the health checks pass, or upgrade stateful units without a restored backup.
 
-Calls: **kubernetes**, **virtualization**, **databases**, **message-queues**, the matching OS skill.
+Calls: **kubernetes**, **virtualization**, **databases**, **backend-api**, the matching OS skill.
 Principles: reversible-first, prove-the-restore, sequence-verifiable-units.
 
 **Reply:** units upgraded, health between each, rollback readiness, and held units.
