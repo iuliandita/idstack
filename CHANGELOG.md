@@ -6,6 +6,8 @@ v0.x was the prerelease phase, where breaking changes were expected.
 
 ## [Unreleased]
 
+## [1.1.2] - 2026-11-06
+
 ### Fixed
 
 - id-mode routes broker work to `backend-api` and app performance to `debug-triage`; skills v4.0.0
@@ -230,7 +232,8 @@ playbooks yet.
   Code and Codex CLIs, security scanning, release workflow, issue and PR templates, and Dependabot
   for workflow actions and the pinned CLIs.
 
-[Unreleased]: https://github.com/iuliandita/idstack/compare/v1.1.1...HEAD
+[Unreleased]: https://github.com/iuliandita/idstack/compare/v1.1.2...HEAD
+[1.1.2]: https://github.com/iuliandita/idstack/compare/v1.1.1...v1.1.2
 [1.1.1]: https://github.com/iuliandita/idstack/compare/v1.1.0...v1.1.1
 [1.1.0]: https://github.com/iuliandita/idstack/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/iuliandita/idstack/compare/v0.5.0...v1.0.0
