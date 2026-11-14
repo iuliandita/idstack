@@ -2,7 +2,7 @@
   "name": "idstack-ci-harness",
   "private": true,
   "dependencies": {
-    "@anthropic-ai/claude-code": "2.1.311",
-    "@openai/codex": "0.164.0"
+    "@anthropic-ai/claude-code": "2.1.319",
+    "@openai/codex": "0.167.0"
   }
 }
