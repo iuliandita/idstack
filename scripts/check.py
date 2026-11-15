@@ -55,7 +55,8 @@ def check_manifests(findings: list[str]) -> None:
     claude_plugin = load_json(ROOT / ".claude-plugin/plugin.json", findings)
     claude_market = load_json(ROOT / ".claude-plugin/marketplace.json", findings)
     codex_market = load_json(ROOT / ".agents/plugins/marketplace.json", findings)
-    if None in (plugin, claude_plugin, claude_market, codex_market):
+    codex_plugin = load_json(ROOT / ".codex-plugin/plugin.json", findings)
+    if None in (plugin, claude_plugin, claude_market, codex_market, codex_plugin):
         return
 
     claude_entry = next((p for p in claude_market.get("plugins", []) if p.get("name") == NAME), None)
@@ -73,6 +74,7 @@ def check_manifests(findings: list[str]) -> None:
         "plugin.json": plugin.get("version"),
         ".claude-plugin/plugin.json": claude_plugin.get("version"),
         ".claude-plugin/marketplace.json entry": (claude_entry or {}).get("version"),
+        ".codex-plugin/plugin.json": codex_plugin.get("version"),
     }
     if len(set(versions.values())) != 1 or None in versions.values():
         findings.append(f"manifest versions differ: {versions}")
