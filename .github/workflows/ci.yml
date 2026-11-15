@@ -197,7 +197,7 @@ jobs:
             (
               cd "$RUNNER_TEMP/idstack-home"
               find . \( -path ./claude/plugins/known_marketplaces.json -o -path ./claude/.claude.json \
-                -o -path ./claude/backups -o -path ./codex/.tmp \) -prune \
+                -o -path ./claude/backups -o -path ./codex/.tmp -o -path ./codex/tmp \) -prune \
                 -o -type l -printf '%p -> %l\n' -o -type f -exec sha256sum {} + | LC_ALL=C sort
             )
           }
