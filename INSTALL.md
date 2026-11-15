@@ -376,7 +376,7 @@ older than 4.4, which prints only `ok`, `errors`, and `exit_code`.
 | `idstack check` | none |
 | `idstack build` | `check`, and `stale` (with `--check`) or `wrote` (otherwise): lists of generated files |
 | `idstack doctor` | `checks`: objects with `name`, `status` (`ok`, `warn`, `fail`, `skip`), `detail` |
-| `idstack plan-summary` | `counts`, `changes`, `destructive`, `stateful`, `iam`, `network`, `out_of_scope`, `errored`, and `predicate` (`pass`, `reasons`, `scope`) with `--predicate`; `errors` holds the failed reasons |
+| `idstack plan-summary` | `counts`, `changes`, `destructive`, `stateful`, `iam`, `network`, `out_of_scope`, `errored`, and `predicate` (`pass`, `reasons`, `scope`) with `--scope GLOB --predicate`; `errors` holds the failed reasons |
 | `idstack judge BATTERY ITEMS` | `used`, `battery`, `model`, `results` (objects with `id`, `outcome`, `answers`, `error`) |
 | `idstack judge BATTERY --eval` | `battery`, `report` (per split), `pass` |
 | `idstack judge BATTERY --example` | `battery`, `item_key`, `questions`, `items` |
@@ -419,9 +419,21 @@ The CLI itself reads:
 Pointing all of the installer's variables at a temporary directory gives an isolated install that
 touches nothing else, which is how CI tests the script. An empty variable counts as unset.
 
+`install.sh` exits with:
+
 | Exit code | Meaning |
 | --- | --- |
 | 0 | Done, or (with `--check`) everything is installed. |
 | 1 | A step failed, or (with `--check`) something is missing. |
 | 2 | Usage error. |
 | 3 | A required tool is missing or too old. |
+
+The `idstack` CLI exits with:
+
+| Exit code | Meaning |
+| --- | --- |
+| 0 | Done. |
+| 1 | Failed, or a check found a problem. |
+| 2 | Usage error. |
+| 3 | `idstack judge` only: a Jev call failed. The items it failed for are unsettled. |
+| 4 | `idstack judge` only: `TYPESAFE_API_KEY` is not set, so nothing was sent. |
