@@ -2227,7 +2227,13 @@ def main() -> int:
     p.add_argument("--json", action="store_true")
     p.set_defaults(fn=cmd_guard)
 
-    a = ap.parse_args()
+    a, extra = ap.parse_known_args()
+    # Before Python 3.13 argparse ends a `*` positional at the first option, so a command that
+    # follows `allow-once --cwd DIR` arrives here instead of in `command`.
+    if extra and a.cmd == "guard" and not a.command and not extra[0].startswith("-"):
+        a.command = extra
+    elif extra:
+        ap.error("unrecognized arguments: " + " ".join(extra))
     try:
         return a.fn(a)
     except CliError as e:
