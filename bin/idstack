@@ -28,6 +28,7 @@ import sys
 import time
 import tomllib
 import urllib.error
+import urllib.parse
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -46,8 +47,14 @@ EXIT_OK, EXIT_FAIL, EXIT_USAGE, EXIT_CALLS, EXIT_NO_KEY = 0, 1, 2, 3, 4
 
 
 def emit(data, as_json: bool, text: str, ok: bool = True, errors: list[str] | None = None) -> None:
-    """Print text, or with --json exactly one object: ok, errors, then the command's own keys."""
-    print(json.dumps({"ok": ok, "errors": errors or [], **data}, indent=2) if as_json else text)
+    """Print text, or with --json one object on stdout (ok, errors, the command's keys) and text on stderr."""
+    if not as_json:
+        print(text)
+        return
+    if text:
+        print(text, file=sys.stderr)
+    own = {k: v for k, v in data.items() if k not in ("ok", "errors")}
+    print(json.dumps({"ok": ok, "errors": errors or [], **own}, indent=2))
 
 
 class CliError(Exception):
@@ -389,8 +396,57 @@ def load_battery(name: str) -> dict:
     return json.loads(path.read_text())
 
 
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None  # the key stays with the configured origin; a 3xx becomes a call error
+
+
+JEV_OPENER = urllib.request.build_opener(NoRedirect)
+REDACT_VALUE = r"""("(?:[^"\\]|\\.)*"|'[^']*'|[^\s;|&"']+)"""
+SECRET_NAME = r"[A-Za-z0-9_.-]*(?:token|secret|passw|key|cred|auth)[A-Za-z0-9_.-]*"
+SECRET_PAIR = re.compile(rf"({SECRET_NAME}=)" + REDACT_VALUE, re.I)
+SECRET_FLAG = re.compile(rf"((?<![^\s;|&(])--?{SECRET_NAME}\s+)(?!-)" + REDACT_VALUE, re.I)
+ENV_ASSIGNMENT = r"[A-Za-z_][A-Za-z0-9_]*=" + REDACT_VALUE.replace("(", "(?:", 1)
+ENV_PREFIX = re.compile(
+    rf"""(^\s*|[;|&({{]\s*|["']|\b(?:env|export|sudo)\s+)((?:{ENV_ASSIGNMENT}\s+)*{ENV_ASSIGNMENT})"""
+)
+ENV_VALUE = re.compile(r"([A-Za-z_][A-Za-z0-9_]*=)" + REDACT_VALUE)
+URL_USERINFO = re.compile(r"(://)[^/\s@]+@")
+AUTH_HEADER = re.compile(r"\b((?:bearer|basic)\s+)[A-Za-z0-9._~+/=-]+", re.I)
+
+
+def redact_command(cmd: str) -> str:
+    """Mask secret-named values, environment assignments, URL credentials, and auth headers.
+
+    Only assignments in front of a command are masked: arguments such as `of=/dev/sdb` are what the
+    judge has to read, and hiding them could clear a command the full text would have flagged.
+    """
+
+    def mask(m: re.Match) -> str:
+        # Whether the value named production still reaches the judge, for the same reason.
+        marked = "<redacted:production>" if re.search("prod", m.group(2), re.I) else "<redacted>"
+        return m.group(1) + marked
+
+    cmd = SECRET_FLAG.sub(mask, cmd)
+    cmd = SECRET_PAIR.sub(mask, cmd)
+    cmd = ENV_PREFIX.sub(lambda m: m.group(1) + ENV_VALUE.sub(mask, m.group(2)), cmd)
+    cmd = URL_USERINFO.sub(r"\1<redacted>@", cmd)
+    return AUTH_HEADER.sub(r"\1<redacted>", cmd)
+
+
+def jev_url_error() -> str | None:
+    parts = urllib.parse.urlsplit(JEV_URL)
+    if parts.scheme != "https" or not parts.hostname:
+        return "IDSTACK_JEV_URL must be an https URL; nothing was sent"
+    return None
+
+
 def jev_ask(battery: dict, item, key: str, timeout: float = 30) -> tuple[dict | None, str | None, dict]:
+    if isinstance(item, dict) and isinstance(item.get("cmd"), str):
+        item = {**item, "cmd": redact_command(item["cmd"])}
     body = {"model": battery["model"], "state": {battery["item_key"]: item}, "questions": battery["questions"]}
+    if err := jev_url_error():
+        return None, err, body
     req = urllib.request.Request(
         JEV_URL,
         data=json.dumps(body).encode(),
@@ -398,16 +454,23 @@ def jev_ask(battery: dict, item, key: str, timeout: float = 30) -> tuple[dict | 
         headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
     )
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            return json.loads(resp.read()), None, body
+        with JEV_OPENER.open(req, timeout=timeout) as resp:
+            answer = json.loads(resp.read())
     except (urllib.error.URLError, TimeoutError, ValueError, OSError) as e:
         return None, str(e), body
+    if not isinstance(answer, dict):
+        return None, "the response is not a JSON object", body
+    return answer, None, body
+
+
+def is_probability(p) -> bool:
+    return isinstance(p, (int, float)) and not isinstance(p, bool) and 0 <= p <= 1  # NaN fails the comparison
 
 
 def jev_outcome(battery: dict, answers: dict | None) -> tuple[str, dict]:
     raw = answers if isinstance(answers, dict) else {}
     probs = {q: raw[q].get("noul") if isinstance(raw.get(q), dict) else None for q in battery["questions"]}
-    if answers is None or any(not isinstance(p, (int, float)) for p in probs.values()):
+    if answers is None or not probs or any(not is_probability(p) for p in probs.values()):
         return "unsettled", probs
     t, rule = battery["threshold"], battery["rule"]
     strict = (lambda p: p < t) if rule == "any-below" else (lambda p: p > t)
@@ -438,7 +501,7 @@ def judge_items(battery: dict, items: list, key: str, trace: Path | None) -> lis
     if battery["rule"] == "rank":
 
         def score(r):
-            vals = [p for p in r["answers"].values() if isinstance(p, (int, float))]
+            vals = [p for p in r["answers"].values() if is_probability(p)]
             return (r["outcome"] != "unsettled", -(max(vals) if vals else 1.0))
 
         results.sort(key=score)
@@ -486,6 +549,8 @@ def cmd_judge(a) -> int:
         msg = "TYPESAFE_API_KEY is not set; Jev was not used. Fall back to the deterministic checks."
         emit({"used": False, "reason": msg}, a.json, f"jev not used: {msg}", ok=False, errors=[msg])
         return EXIT_NO_KEY
+    if err := jev_url_error():
+        raise usage_error(err)
     trace = Path(a.trace) if a.trace else None
     if a.eval:
         return judge_eval(battery, key, a, trace)
@@ -518,9 +583,16 @@ def cmd_judge(a) -> int:
 
 def judge_eval(battery: dict, key: str, a, trace: Path | None) -> int:
     cases_path = Path(a.cases) if a.cases else ROOT / "fixtures/jev" / battery["battery"] / "cases.jsonl"
-    cases = [json.loads(ln) for ln in cases_path.read_text().splitlines() if ln.strip()]
+    try:
+        cases = [json.loads(ln) for ln in cases_path.read_text().splitlines() if ln.strip()]
+        if any(not isinstance(c, dict) or not {"id", "item", "expected"} <= set(c) for c in cases):
+            raise ValueError("every case needs id, item, and expected")
+    except (OSError, ValueError) as e:
+        raise usage_error(f"cannot read cases: {e}; pass --cases with a cases.jsonl file") from e
     if a.split != "all":
         cases = [c for c in cases if c.get("split") == a.split]
+    if not cases:
+        return fail(a, f"no cases selected from {cases_path} (split {a.split}); nothing was checked", EXIT_FAIL)
     results = {r["id"]: r for r in judge_items(battery, [(c["id"], c["item"]) for c in cases], key, trace)}
     report: dict[str, dict] = {}
     for c in cases:
@@ -544,7 +616,8 @@ def judge_eval(battery: dict, key: str, a, trace: Path | None) -> int:
         for kind in ("fn", "fp"):
             for x in b[kind]:
                 lines.append(f"    {kind} {x['id']} {x['answers']}")
-    failed = bool(report.get("holdout", {}).get("fn")) or any(b["errors"] for b in report.values())
+    call_errors = any(b["errors"] for b in report.values())
+    failed = bool(report.get("holdout", {}).get("fn")) or call_errors
     emit(
         {"battery": battery["battery"], "report": report, "pass": not failed},
         a.json,
@@ -552,7 +625,7 @@ def judge_eval(battery: dict, key: str, a, trace: Path | None) -> int:
         ok=not failed,
         errors=["eval failed: a holdout false negative or a call error"] if failed else None,
     )
-    return EXIT_FAIL if failed else EXIT_OK
+    return EXIT_CALLS if call_errors else EXIT_FAIL if failed else EXIT_OK
 
 
 # --- doctor ---------------------------------------------------------------------------------
@@ -716,17 +789,14 @@ def cmd_doctor(a) -> int:
                 rc, out = run_quiet(
                     ["kubectl", "--context", ctx.strip(), "auth", "can-i", "create", "deployments", "--all-namespaces"]
                 )
-                can = out.strip() == "yes"
-                add(
-                    "kube context write access",
-                    "warn" if can else "ok",
-                    f"{ctx.strip()}: "
-                    + (
-                        "can create deployments; prefer a read-only context for agents"
-                        if can
-                        else "read-only for deployments"
-                    ),
-                )
+                answer = out.split()[0] if out.split() else ""
+                status, detail = {
+                    "yes": ("warn", "can create deployments; prefer a read-only context for agents"),
+                    "no": ("ok", "read-only for deployments"),
+                }.get(answer, ("fail", f"the probe failed (kubectl exit {rc}); write access is unknown"))
+                add("kube context write access", status, f"{ctx.strip()}: {detail}")
+            else:
+                add("kube context write access", "fail", f"no current kube context (kubectl exit {rc}); not probed")
         else:
             add("kube context write access", "skip", "kubectl not on PATH")
     else:
@@ -772,7 +842,7 @@ def build_outputs() -> dict[Path, str]:
         ag = parse_agent(src)
         rel = src.relative_to(ROOT).as_posix()
         read_only = bool(ag["tools"]) and not {"Edit", "Write"} & set(ag["tools"])
-        body = ag["body"].replace('"""', '\\"\\"\\"')
+        body = ag["body"].replace("\\", "\\\\").replace('"""', '\\"\\"\\"')
         if read_only:
             body += "\nYou are read-only: never edit files or run a command that changes state.\n"
         out[ROOT / "harness/codex/agents" / f"{ag['name']}.toml"] = (
@@ -804,9 +874,22 @@ def build_outputs() -> dict[Path, str]:
     return out
 
 
+def orphaned_outputs(outputs: dict[Path, str]) -> list[Path]:
+    """Generated files whose source is gone (an agent or skill renamed or removed)."""
+    found = [
+        *(ROOT / "harness/codex/agents").glob("*.toml"),
+        *(ROOT / "harness/opencode/agents").glob("*.md"),
+        *(ROOT / "skills").glob("*/agents/openai.yaml"),
+    ]
+    marker = GENERATED.split("{src}")[0]
+    return sorted(p for p in found if p not in outputs and marker in p.read_text(errors="replace"))
+
+
 def cmd_build(a) -> int:
     stale = []
-    for path, content in build_outputs().items():
+    outputs = build_outputs()
+    orphans = orphaned_outputs(outputs)
+    for path, content in outputs.items():
         current = path.read_text() if path.exists() else None
         if current == content:
             continue
@@ -814,11 +897,18 @@ def cmd_build(a) -> int:
         if not a.check:
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(content)
+    removed = [p.relative_to(ROOT).as_posix() for p in orphans]
+    if a.check:
+        stale += removed
+    else:
+        for path in orphans:
+            path.unlink()
     verb = "stale" if a.check else "wrote"
     emit(
-        {"check": a.check, verb: stale},
+        {"check": a.check, verb: stale, **({} if a.check else {"removed": removed})},
         a.json,
-        "\n".join(f"{verb}: {p}" for p in stale) or "generated files are current",
+        "\n".join([*(f"{verb}: {p}" for p in stale), *(f"removed: {p}" for p in ([] if a.check else removed))])
+        or "generated files are current",
         ok=not (a.check and stale),
         errors=[f"stale generated file: {p}; run `idstack build`" for p in stale] if a.check else None,
     )
@@ -1422,10 +1512,13 @@ def main() -> int:
         help="run one Jev decision point",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=epilog(
-            ["TYPESAFE_API_KEY  Jev API key; without it nothing is sent", "IDSTACK_JEV_URL   Jev endpoint override"],
+            [
+                "TYPESAFE_API_KEY  Jev API key; without it nothing is sent",
+                "IDSTACK_JEV_URL   Jev endpoint override; https only, redirects are not followed",
+            ],
             [
                 "0  done",
-                "1  failed",
+                "1  failed: with --eval, a holdout false negative or no case selected",
                 "2  usage error",
                 "3  one or more Jev calls errored",
                 "4  TYPESAFE_API_KEY is not set",
@@ -1452,7 +1545,7 @@ def main() -> int:
                 "    where installed skills and agents are looked up",
                 "TYPESAFE_API_KEY  reported as set or not set",
             ],
-            ["0  done, no check failed", "1  a check failed", "2  usage error"],
+            ["0  done, no check failed", "1  a check failed, or (with --live) the probe failed", "2  usage error"],
         ),
     )
     p.add_argument("--live", action="store_true", help="also probe the active kube context (read-only)")
@@ -1496,7 +1589,9 @@ def main() -> int:
                 "IDSTACK_GUARD_MODE  overrides the configured mode (log or ask)",
                 "CODEX_HOME  Codex hooks location for install",
                 "TYPESAFE_API_KEY, IDSTACK_JEV_URL",
-                "    used with --jev on to judge ambiguous commands",
+                "    used with --jev on to judge ambiguous commands: the command text and the",
+                "    working directory go to the Jev endpoint, with environment assignments,",
+                "    secret-named values, URL credentials, and auth headers masked first",
             ],
             EXIT_STD,
         ),
@@ -1511,7 +1606,12 @@ def main() -> int:
     )
     p.add_argument("--harness", choices=("claude", "codex", "opencode"), default="claude")
     p.add_argument("--mode", choices=("log", "ask"), default="ask", help="mode for enable")
-    p.add_argument("--jev", choices=("on", "off"), help="ask Jev about ambiguous infra commands")
+    p.add_argument(
+        "--jev",
+        choices=("on", "off"),
+        help="ask Jev about ambiguous infra commands; on sends each such command (secrets masked) "
+        "and the working directory to the Jev endpoint",
+    )
     p.add_argument("--ttl", type=int, default=600, help="seconds an allow-once token lasts")
     p.add_argument("--dry-run", action="store_true")
     p.add_argument("--json", action="store_true")
@@ -1522,6 +1622,8 @@ def main() -> int:
         return a.fn(a)
     except CliError as e:
         return fail(a, str(e), e.code)
+    except Exception as e:  # keep the --json contract: one object, never a bare traceback
+        return fail(a, f"internal error: {type(e).__name__}: {e}", EXIT_FAIL)
 
 
 if __name__ == "__main__":
