@@ -128,11 +128,14 @@ heredocs, command substitutions, and commands behind a launcher (`xargs`, `eval`
 - commands nested more than four levels deep, and `-c` with no command;
 - a shell or `ssh` fed by a pipe or here-string, when the text names a tool the rules cover, also
   when the shell is told to read standard input (`-`, `/dev/stdin`);
-- a tool the rules cover behind `xargs` or `parallel`, when its arguments come from input the guard
-  cannot read and could supply the verb. Input from a heredoc, a here-string, or `echo` is read;
-- `sed`, `awk`, `tar`, `rsync`, and similar utilities when an option or their script runs a command:
-  the command is read where it is an option value, and held when it is not readable and the text
-  names a tool the rules cover;
+- a command that runs something its own words do not show, when the command line names a tool the
+  rules cover: `xargs` and `parallel` (unless they launch a command that only reads data, such as
+  `grep` or `wc`), `find -exec` and `fd -x`, `env -S`, `sed` and `awk` with anything but a plain
+  print, delete, or substitute script, and `tar`, `rsync`, `sort`, `man`, `rg`, `scp`, `wget`, or
+  `bat` given an option that runs a command. The guard does not rebuild what they will run. An
+  argument of a command that only reads data, such as a `grep` pattern, does not count as naming a
+  tool, so `grep -rn kubectl docs | awk -F: '{print $1}'` passes and
+  `kubectl get pods -o name | xargs kubectl describe` is held;
 - a shell call whose payload carries no command;
 - a tool that needs no verb, such as `ansible-playbook`, behind any command the guard does not know.
 
