@@ -6,7 +6,7 @@ For finding where reality differs from code: IaC state, host config, GitOps apps
 
 1. Pin the target per `references/targets.md` for each system audited. Use read-only credentials where they exist.
 2. Terraform and OpenTofu: run `plan -detailed-exitcode` per state, read-only, with the repo's lock convention. Exit code 2 is drift. Summarize it with `plan-reader`. Exit code 1 is an error, not a clean result.
-3. Ansible: `--check --diff --limit <group>` per inventory group. Note tasks that check mode cannot predict (`command`, `shell`).
+3. Ansible: `--check --diff --limit <group>` per inventory group. Before any `--check` run, search the plays and roles in scope for `check_mode: false` (or `no`). A task that sets it runs for real under `--check`: stop at a **Gate** before that run. Drop `--diff` for plays that template secrets. Note tasks that check mode cannot predict (`command`, `shell`, `raw`, `script`).
 4. GitOps: list apps that are OutOfSync, apps whose synced revision is behind HEAD, resources with ignored differences, and resources created outside git.
 5. UI edits: compare dashboards and alert rules edited in the UI against their code, and look for cluster settings changed by hand.
 6. Classify each drift as intended but not codified, accidental, or dangerous.

@@ -1,6 +1,6 @@
 # Jev batteries
 
-One file per decision point: `<battery>.json`. `idstack judge <battery> <items.json>` reads it, sends one request per item, applies the rule, and prints an outcome per item. Jev answers only tighten: an outcome can add a stop, a finding, or an ordering, never remove one.
+One file per decision point: `<battery>.json`. `idstack judge <battery> <items.json>` reads it, sends one request per item, applies the rule, and prints an outcome per item. Jev answers only tighten: an outcome can add a stop, a finding, or an ordering, never remove one. `log-filtering` is the one exception, described below.
 
 ## Battery file
 
@@ -16,7 +16,7 @@ One file per decision point: `<battery>.json`. `idstack judge <battery> <items.j
   "questions": {
     "<question_id>": {
       "type": "noul",
-      "instructions": "One concrete, observable judgment about `<item_key>`, phrased so true means the risky answer.",
+      "instructions": "One concrete, observable judgment about `<item_key>`, phrased so true means the risky answer (the safe answer under `any-below`).",
       "criteria": {"true": "...", "false": "..."}
     }
   }
@@ -30,6 +30,9 @@ One file per decision point: `<battery>.json`. `idstack judge <battery> <items.j
   - `any-below`: `flag` when any answer is below `threshold`, `clear` when all are above it.
   - `rank`: like `any-above`, and items are also printed unsettled first, then in descending order of their highest answer.
 - An answer exactly on the threshold, a missing answer, or a failed call makes the item `unsettled`. Callers treat `unsettled` like `flag`.
+- Two batteries are exceptions on purpose:
+  - `outgoing-claims` uses `any-below`: its question asks whether a claim is supported, so true is the safe answer and a low answer flags.
+  - `log-filtering`: `clear` lets a chunk be skipped on the first pass, the one outcome that sets something aside. Full logs are kept, the filter widens when the kept chunks do not explain the symptom, and a skipped chunk is never evidence that something did not happen.
 
 ## Labeled cases
 

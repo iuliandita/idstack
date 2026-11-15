@@ -11,7 +11,7 @@ For a backlog of Renovate or Dependabot PRs, or a single chart, provider, module
 4. For charts, diff the default values between versions, render old and new with the repo's values, diff the renders, and diff CRDs separately because Helm does not upgrade CRDs.
 5. For providers and modules, run the plan and summarize it with `plan-reader`, as in `iac-change`.
 6. For GitHub Actions, confirm the new ref is pinned by SHA and comes from the original repo.
-7. Merge the bumps that are green, low-risk, and do not deploy on merge, with short squash messages. Stop at the operator's stop line. Run **Opening a PR** for any bump you author.
+7. Merge the bumps that are green, low-risk (patch or minor, not stateful, no `flag` or `unsettled` bullet in step 3), and do not deploy on merge, with short squash messages. Stop at the operator's stop line. Run **Opening a PR** for any bump you author.
 8. **Gate:** each bump whose merge deploys, and every major.
 9. If the bot has gone quiet, diagnose it read-only: bot logs, dashboard issue, config errors, rate limits, token expiry.
 

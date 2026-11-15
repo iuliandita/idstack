@@ -6,9 +6,9 @@ Classify every action before running it. Class follows the downstream effect, no
 
 | Class | Examples | Rule |
 | --- | --- | --- |
-| Read | `get`, `describe`, `logs`, `plan`, `diff`, `template`, `--check`, PromQL and LogQL queries, `dig`, `openssl s_client`, scans of your own assets | Free. Bound it: time ranges, `--tail`, limits. Never read Secret values. |
-| Reversible write | Branch, commit, push to a branch that triggers nothing, PR or MR, local render, restore into a scratch namespace, draft message, issue | Free, unless it triggers automation that deploys (below). |
-| State-mutating | `apply`, `destroy`, state commands, `import`, `sync` to a shared environment, `delete`, `scale`, `drain`, `rollout restart`, `helm upgrade`, Ansible without `--check`, firewall or DNS changes, secret rotation or revocation, reboot, VM destroy or stop, sending an external message, a merge or push that deploys | Always a gate. |
+| Read | `get`, `describe`, `logs`, `plan`, `diff`, `template`, `--check` (unless a task in scope sets `check_mode: false`), PromQL and LogQL queries, `dig`, `openssl s_client`, scans of your own assets | Free. Bound it: time ranges, `--tail`, limits. Never read Secret values. |
+| Reversible write | Branch, commit, push to a branch that triggers nothing, PR or MR, local render, draft message, issue | Free, unless it triggers automation that deploys (below). |
+| State-mutating | `apply`, `destroy`, state commands, `import`, `sync` to a shared environment, `delete`, `scale`, `drain`, `rollout restart`, `helm upgrade`, a restore (even into a scratch namespace), Ansible without `--check`, firewall or DNS changes, secret rotation or revocation, reboot, VM destroy or stop, sending an external message, a merge or push that deploys | Always a gate. |
 
 **Git events can be writes.** A push, PR, merge, tag, or workflow dispatch that triggers automation able to deploy or change infrastructure is state-mutating: CI that applies on push, preview environments on PR, ArgoCD or Flux auto-sync on merge, a tag that publishes. That automation runs with its own credentials, so the agent's read-only credentials do not stop it. Every change playbook's first step finds out which git events deploy in the target repo and records it. If you cannot tell, treat the event as state-mutating.
 
@@ -44,8 +44,8 @@ Example predicates:
   jq -r '.resource_changes[] | select(.change.actions != ["no-op"] and .change.actions != ["read"]) | .address' plan.json   # every line in the named set
   ```
 
-- **Helm, Kustomize** (rendered diff against live): only the named kinds and names change; no deletions, and no CRD, RBAC, PVC, or NetworkPolicy changes.
-- **Ansible** (`--check --diff` output): `changed` only on the named hosts and tasks, and no `command` or `shell` tasks in the changed set.
+- **Helm, Kustomize** (rendered diff against live, and the live objects missing from the new render, which the diff does not show and prune deletes): only the named kinds and names change; no deletions or prunes, and no CRD, RBAC, PVC, or NetworkPolicy changes.
+- **Ansible** (`--check --diff` output, and the plays and roles in scope): `changed` only on the named hosts and tasks, and no `command`, `shell`, `raw`, or `script` task among the tasks that would run on the limited hosts. Check mode does not run those tasks, so their absence from the changed set proves nothing.
 
 **Never grantable:** destroy, state surgery (`state rm`, `state mv`, `state push`, `force-unlock`), data deletion, revoking or rotating root or break-glass credentials, a change to the operator's own access path (VPN, SSH, firewall rules that carry the session). These always stop at a gate, whatever the grant says.
 

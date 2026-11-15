@@ -9,7 +9,7 @@ For DNS records, reverse proxy routes, firewall rules, VPN users and peers, TLS 
 3. Back up the current config: zone export, firewall config export, proxy config in git.
 4. Confirm an out-of-band path exists (console, second VPN, a session kept open) before touching anything that could cut access. A change to the operator's own access path is never grantable.
 5. Make the change in IaC where it lives in IaC. For appliances without an API, draft the exact change for the human to apply.
-6. For DNS, lower the TTL ahead of a cutover and wait out the old TTL. For certificates, use a staging issuer first when available.
+6. For DNS, lower the TTL ahead of a cutover as its own **Gate**, and wait out the old TTL. For certificates, use a staging issuer first when available.
 7. Run **Opening a PR** per repo that holds part of the change.
 8. **Gate:** per location. One rule at a time on firewalls, with revert-on-timeout where the appliance supports it.
 9. Verify from each side with `change-verifier`. `dig @<ns>` against the authoritative server and against a public resolver, `curl --resolve`, `openssl s_client -connect host:443 -servername host` for the served chain and expiry, a connection test from each network segment, and the VPN client actually connecting.
