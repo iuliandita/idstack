@@ -6,7 +6,15 @@
 # `any_verb_regex`: matched against every positional argument instead of the first ones.
 # `requires`: a positional argument that must also be present (for example a subcommand).
 # `danger_flags`: any of these flags makes the command match, whatever the verb.
+# A flag written `--flag=value` there matches only with that value.
 # `remote_flags`: with `remote_only`, any of these flags counts as a remote target.
+# `remote_target`: with `remote_only`, a last positional argument matching this regex counts as one too.
+# `with_flags`: the verb matches only when one of these flags is present (also `--flag-suffix` and,
+# for a one-letter flag, inside a bundle such as `-rd`).
+# `skip_words`: leading positional arguments to ignore (`gcloud beta ...`).
+# `launcher`: the tool also starts other commands, so a tool named after it is still read as a command.
+# Rules marked `remote_only` apply to a command that runs on another host (behind `ssh`, or with a
+# remote flag or argument); locally the same command passes.
 # The guard is a seatbelt, not a lock: aliases, scripts, and quoting can hide a verb.
 
 [[rule]]
@@ -17,8 +25,14 @@ reason = "changes the guard itself; only the operator does this"
 
 [[rule]]
 tools = ["terraform", "tofu"]
-verbs = ["apply", "destroy", "import", "taint", "untaint", "force-unlock", "state rm", "state mv", "state push", "state replace-provider", "workspace delete"]
+verbs = ["apply", "destroy", "refresh", "test", "import", "taint", "untaint", "force-unlock", "state rm", "state mv", "state push", "state replace-provider", "workspace delete"]
 reason = "changes infrastructure or state"
+
+[[rule]]
+tools = ["terraform", "tofu"]
+verbs = ["init"]
+with_flags = ["-migrate-state", "-force-copy"]
+reason = "moves state to another backend"
 
 # Terragrunt nests the verb (run --all apply, run -- apply, run-all destroy) after its own flags.
 [[rule]]
@@ -95,15 +109,121 @@ reason = "changes a libvirt guest or storage"
 [[rule]]
 tools = ["aws"]
 value_flags = ["--profile", "--region", "--output", "--endpoint-url", "--query", "--color"]
-any_verb_regex = "^(delete|terminate|destroy|remove|deregister|revoke|stop|reboot|disable|detach|disassociate|rb|rm|mv)(-|$)"
-danger_flags = ["--delete"]
-reason = "deletes or stops cloud resources"
+any_verb_regex = "^(delete|terminate|destroy|remove|deregister|revoke|stop|reboot|disable|detach|disassociate|release|purge|schedule-key-deletion|rb|rm|mv)(-|$)"
+danger_flags = ["--delete", "--publicly-accessible", "--acl=public-read", "--acl=public-read-write"]
+reason = "deletes, stops, or exposes cloud resources"
+
+# IAM grants and policy writes, security-group opens, deploys, and remote commands.
+[[rule]]
+tools = ["aws"]
+value_flags = ["--profile", "--region", "--output", "--endpoint-url", "--query", "--color"]
+any_verb_regex = "^(attach-[a-z-]*policy|put-[a-z-]*(policy|acl|permissions-boundary|public-access-block)|set-[a-z-]*policy(-version)?|add-(permission|user-to-group|role-to-instance-profile)|create-(access-key|login-profile|policy-version|grant)|update-(assume-role-policy|login-profile)|authorize-[a-z-]+|modify-security-group-rules|send-command|execute-command|update-function-(code|configuration)|update-service|(create|start)-deployment|execute-change-set|(create|update)-stack(-set|-instances)?|public-read(-write)?)$"
+reason = "grants access, opens the network, deploys, or runs a remote command"
+
+[[rule]]
+tools = ["aws"]
+value_flags = ["--profile", "--region", "--output", "--endpoint-url", "--query", "--color"]
+requires = "cloudformation"
+any_verb_regex = "^deploy$"
+reason = "deploys a stack"
 
 [[rule]]
 tools = ["gcloud", "az", "doctl", "hcloud", "linode-cli", "scw", "oci"]
 value_flags = ["--project", "--format", "--account", "--subscription", "--context", "--region", "--zone"]
-any_verb_regex = "^(delete|destroy|remove|rm|terminate|stop|reset|deallocate|purge)$"
+any_verb_regex = "^(delete|destroy|remove|rm|terminate|stop|reset|deallocate|purge)(-|$)"
 reason = "deletes or stops cloud resources"
+
+[[rule]]
+tools = ["gcloud"]
+value_flags = ["--project", "--format", "--account", "--region", "--zone", "--configuration", "--verbosity", "--impersonate-service-account", "--billing-project"]
+any_verb_regex = "^(add-iam-policy-binding|set-iam-policy)$"
+reason = "grants access"
+
+[[rule]]
+tools = ["gcloud"]
+value_flags = ["--project", "--format", "--account", "--region", "--zone", "--configuration", "--verbosity", "--impersonate-service-account", "--billing-project"]
+skip_words = ["alpha", "beta", "preview"]
+verbs = ["iam service-accounts keys create", "iam roles create", "iam roles update", "compute firewall-rules create", "compute firewall-rules update", "run deploy", "run jobs deploy", "app deploy", "functions deploy", "deploy releases create", "deployment-manager deployments create", "deployment-manager deployments update", "compute ssh"]
+danger_flags = ["--allow-unauthenticated"]
+reason = "grants access, opens the network, deploys, or runs a remote command"
+
+[[rule]]
+tools = ["az"]
+value_flags = ["--subscription", "-g", "--resource-group", "-n", "--name", "-o", "--output", "--query", "-l", "--location"]
+verbs = ["role assignment create", "role assignment update", "role definition create", "role definition update", "ad sp create-for-rbac", "ad app credential reset", "ad sp credential reset", "keyvault set-policy", "network nsg rule create", "network nsg rule update", "vm open-port", "deployment group create", "deployment sub create", "deployment mg create", "deployment tenant create", "webapp deploy", "functionapp deploy", "webapp deployment source config-zip", "functionapp deployment source config-zip", "vm run-command invoke", "vm run-command create", "vmss run-command invoke", "vmss run-command create", "aks command invoke", "container exec"]
+danger_flags = ["--public-access", "--allow-blob-public-access"]
+reason = "grants access, opens the network, deploys, or runs a remote command"
+
+[[rule]]
+tools = ["az"]
+value_flags = ["--subscription", "-g", "--resource-group", "-n", "--name", "-o", "--output", "--query", "-l", "--location"]
+requires = "firewall-rule"
+any_verb_regex = "^(create|update)$"
+reason = "opens a server firewall"
+
+[[rule]]
+tools = ["pulumi"]
+value_flags = ["-s", "--stack", "-C", "--cwd", "--color", "--config-file", "-m", "--message", "-p", "--parallel"]
+verbs = ["up", "update", "destroy", "refresh", "import", "cancel", "stack rm", "state remove", "state delete", "state edit", "state move", "state rename", "state repair", "state unprotect", "state upgrade"]
+reason = "changes infrastructure or state"
+
+[[rule]]
+tools = ["helmfile"]
+value_flags = ["-f", "--file", "-e", "--environment", "-n", "--namespace", "-l", "--selector", "--kube-context", "--state-values-set", "--state-values-file", "-b", "--helm-binary", "--log-level"]
+verbs = ["apply", "sync", "destroy", "delete", "charts"]
+reason = "changes Helm releases"
+
+[[rule]]
+tools = ["eksctl"]
+value_flags = ["-p", "--profile", "-r", "--region", "-v", "--verbose", "--color"]
+verbs = ["create", "delete", "update", "upgrade", "scale", "drain"]
+reason = "changes an EKS cluster"
+
+[[rule]]
+tools = ["gsutil"]
+value_flags = ["-o", "-h", "-u", "-i"]
+verbs = ["rm", "rb", "mv", "iam set", "iam ch", "acl set", "acl ch", "defacl set", "defacl ch"]
+reason = "deletes objects or changes who can read them"
+
+[[rule]]
+tools = ["gsutil"]
+value_flags = ["-o", "-h", "-u", "-i"]
+verbs = ["rsync"]
+with_flags = ["-d"]
+reason = "deletes objects that are missing from the source"
+
+[[rule]]
+tools = ["vault"]
+any_verb_regex = "^(delete|destroy|revoke)$"
+reason = "deletes secrets or revokes leases and tokens"
+
+[[rule]]
+tools = ["docker", "podman"]
+launcher = true
+value_flags = ["-f", "--file", "-p", "--project-name", "--profile", "--env-file", "--project-directory", "-c", "--context", "-H", "--host", "-l", "--log-level", "--ansi", "--progress", "--parallel"]
+verbs = ["compose down"]
+with_flags = ["-v", "--volumes"]
+reason = "removes the project's volumes"
+
+[[rule]]
+tools = ["docker-compose", "podman-compose"]
+value_flags = ["-f", "--file", "-p", "--project-name", "--profile", "--env-file", "--project-directory", "-c", "--context", "-H", "--host", "--ansi", "--progress", "--parallel"]
+verbs = ["down"]
+with_flags = ["-v", "--volumes"]
+reason = "removes the project's volumes"
+
+# Plain `git push` is not held: see the limits in INSTALL.md.
+[[rule]]
+tools = ["gh"]
+value_flags = ["-R", "--repo"]
+verbs = ["pr merge", "workflow run", "run rerun"]
+reason = "merges or starts a workflow on the forge"
+
+[[rule]]
+tools = ["glab"]
+value_flags = ["-R", "--repo"]
+verbs = ["mr merge", "ci run", "ci retry", "ci trigger"]
+reason = "merges or starts a pipeline on the forge"
 
 [[rule]]
 tools = ["systemctl"]
@@ -118,3 +238,50 @@ tools = ["reboot", "shutdown", "poweroff", "halt"]
 remote_only = true
 verbs = [""]
 reason = "restarts or stops a remote host"
+
+[[rule]]
+tools = ["rm", "kill", "pkill", "killall", "dd", "mkfs", "mkfs.ext4", "mkfs.xfs", "mkfs.btrfs", "mkfs.vfat", "lvremove", "vgremove", "pvremove"]
+remote_only = true
+verbs = [""]
+reason = "deletes data or stops processes on a remote host"
+
+[[rule]]
+tools = ["service"]
+remote_only = true
+any_verb_regex = "^(start|stop|restart|reload|force-reload|try-restart|condrestart)$"
+reason = "changes a service on a remote host"
+
+[[rule]]
+tools = ["zfs", "zpool"]
+remote_only = true
+verbs = ["destroy"]
+reason = "destroys storage on a remote host"
+
+[[rule]]
+tools = ["docker", "podman"]
+launcher = true
+remote_only = true
+value_flags = ["-c", "--context", "-H", "--host", "-l", "--log-level"]
+verbs = ["rm", "container rm", "volume rm"]
+reason = "removes containers or volumes on a remote host"
+
+[[rule]]
+tools = ["apt", "apt-get", "dnf", "yum", "zypper", "apk"]
+remote_only = true
+verbs = ["remove", "purge", "autoremove", "erase", "rm", "del"]
+reason = "removes packages on a remote host"
+
+[[rule]]
+tools = ["pacman", "dpkg", "rpm"]
+remote_only = true
+verbs = []
+danger_flags = ["-R", "-Rs", "-Rn", "-Rns", "-Rsn", "-Rc", "-Rsc", "-Rdd", "--remove", "-r", "-P", "--purge", "-e", "--erase"]
+reason = "removes packages on a remote host"
+
+[[rule]]
+tools = ["rsync"]
+remote_only = true
+remote_target = "^(rsync://|[^/\\s:]+:)"
+verbs = [""]
+with_flags = ["--delete", "--del", "--remove-source-files"]
+reason = "deletes files on a remote host"
