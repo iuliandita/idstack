@@ -318,9 +318,21 @@ The CLI itself reads:
 Pointing all of the installer's variables at a temporary directory gives an isolated install that
 touches nothing else, which is how CI tests the script.
 
+`install.sh` exits with:
+
 | Exit code | Meaning |
 | --- | --- |
 | 0 | Done, or (with `--check`) everything is installed. |
 | 1 | A step failed, or (with `--check`) something is missing. |
 | 2 | Usage error. |
 | 3 | A required tool is missing or too old. |
+
+The `idstack` CLI exits with:
+
+| Exit code | Meaning |
+| --- | --- |
+| 0 | Done. |
+| 1 | Failed, or a check found a problem. |
+| 2 | Usage error. |
+| 3 | `idstack judge` only: a Jev call failed. The items it failed for are unsettled. |
+| 4 | `idstack judge` only: `TYPESAFE_API_KEY` is not set, so nothing was sent. |
