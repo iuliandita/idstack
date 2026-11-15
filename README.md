@@ -252,7 +252,7 @@ idstack adds none of these and calls some of them from its playbooks.
 | `install.sh` | shipped | Installs pstack where missing, then idstack, on Claude Code, Codex, and OpenCode |
 | pstack model files | shipped | Per-role models from `config/pstack-models.json` plus your overrides, routed across providers through T3 Code or each provider's CLI, with a native fallback |
 | `scripts/check.py` | shipped | ASCII, manifests, links, router catalog against playbook files, names |
-| `idstack plan-summary` | shipped | Deterministic Terraform/OpenTofu plan summary and grant predicate (`--predicate`, exit 1 on fail) |
+| `idstack plan-summary` | shipped | Deterministic Terraform/OpenTofu plan summary and grant predicate (`--scope GLOB --predicate`, exit 1 on fail) |
 | `idstack judge` | shipped | Runs one Jev battery from `src/questions/`; `--eval` checks it against labeled cases ([calibration](docs/jev-calibration.md)) |
 | `idstack doctor` | shipped | Harnesses, pstack, domain skills, infra CLIs, Jev key, guard mode; `--live` probes kube write access read-only |
 | `idstack guard` | shipped | Opt-in hook: `log` or `ask` mode, `allow-once` tokens for harnesses that cannot ask, optional Jev for ambiguous commands |

@@ -19,7 +19,7 @@ the harness and its version, the install mode, a redacted reproduction, and the 
   without a gate, or lets a Jev answer loosen a gate.
 - The guard: a state-mutating command it should match that runs without an ask or block, or a way
   for an agent to approve its own command.
-- `idstack plan-summary --predicate` exiting 0 on a plan that has a delete, replace, or forget, an
+- `idstack plan-summary --scope GLOB --predicate` exiting 0 on a plan that has a delete, replace, or forget, an
   out-of-scope change, or an IAM or network change the grant did not allow.
 - `idstack judge`: any path where a Jev answer, a failed call, or a missing answer clears an item
   instead of tightening it.

@@ -72,7 +72,8 @@ def fail(a, msg: str, code: int) -> int:
 STATEFUL = re.compile(
     r"(db_|database|_rds|bucket|storage|volume|disk|persistent_volume|snapshot|file_system|"
     r"filestore|efs|fsx|queue|topic|stream|table|dynamodb|redis|elasticache|memorystore|cosmosdb|"
-    r"backup|kms_key|secret|_zone$|managed_zone)",
+    r"backup|kms_key|secret|_zone$|managed_zone|redshift|neptune|opensearch|elasticsearch|msk|"
+    r"ecr_repository|dataset|spanner|key_vault|namespace|stateful_set)",
     re.I,
 )
 IAM = re.compile(
@@ -83,7 +84,8 @@ NOT_IAM = re.compile(
 )
 NETWORK = re.compile(
     r"(security_group|firewall|network_policy|network_acl|route|subnet|vpc|vnet|cidr|ingress|egress|"
-    r"load_balancer|_lb|lb_|nat|peering|gateway|endpoint|_record$|dns|listener|target_group|tunnel|vpn)",
+    r"load_balancer|_lb|lb_|nat|peering|gateway|endpoint|_record$|dns|listener|target_group|tunnel|vpn|"
+    r"public_ip|_eip|function_url|cloudfront|kubernetes_service(_v1)?$)",
     re.I,
 )
 EXPOSURE_ATTR = re.compile(
@@ -92,25 +94,102 @@ EXPOSURE_ATTR = re.compile(
     re.I,
 )
 IAM_ATTR = re.compile(r"(policy|role|iam|permission|acl|principal|grant|member|binding|service_account)", re.I)
+# Nested names only, so no top-level attribute loses the flag it had: every Kubernetes pod spec carries these.
+NESTED_NOT_IAM_ATTR = re.compile(r"(pull_policy|restart_policy|dns_policy|message_policy)$", re.I)
+NEGATED_PUBLIC = re.compile(r"^(block|restrict|ignore)_public", re.I)
 WORLD = re.compile(r"(0\.0\.0\.0/0|::/0)")
+ADDRESS_INDEX = re.compile(r'\[(?:"(?:[^"\\]|\\.)*"|[^\]"]*)\]')
+ACTIONS = ("create", "update", "import", "delete", "replace", "forget", "create+forget")
+DIFF_KEYS = 20
 
 
-def attr_flags(change: dict) -> tuple[bool, bool]:
-    """(iam, network) from the attributes a change touches, for resources whose type does not say."""
+def has_unknown(unknown) -> bool:
+    """after_unknown mirrors the value's shape; only a true leaf marks something unknown."""
+    if isinstance(unknown, dict):
+        return any(has_unknown(v) for v in unknown.values())
+    if isinstance(unknown, list):
+        return any(has_unknown(v) for v in unknown)
+    return unknown is True
+
+
+def changed_paths(before, after, unknown, path: tuple[str, ...] = ()):
+    """Yield (attribute-name path, is unknown, new value) for every leaf a change touches."""
+    if unknown is True:
+        yield path, True, None
+        return
+    pair = (before, after)
+    if any(isinstance(v, dict) for v in pair) and all(v is None or isinstance(v, dict) for v in pair):
+        b, a, u = before or {}, after or {}, unknown if isinstance(unknown, dict) else {}
+        for k in sorted({*b, *a, *u}):
+            yield from changed_paths(b.get(k), a.get(k), u.get(k), (*path, k))
+    elif any(isinstance(v, list) for v in pair) and all(v is None or isinstance(v, list) for v in pair):
+        lists = (before or [], after or [], unknown if isinstance(unknown, list) else [])
+        for i in range(max(map(len, lists))):
+            yield from changed_paths(*(s[i] if i < len(s) else None for s in lists), path)
+    elif before != after:
+        yield path, False, after
+    elif has_unknown(unknown):
+        yield path, True, None
+
+
+def config_expressions(plan: dict, address: str) -> dict | None:
+    """The configuration's expressions for a resource, or None when the plan cannot show them."""
+    config = plan.get("configuration")
+    node = config.get("root_module") if isinstance(config, dict) else None
+    parts = ADDRESS_INDEX.sub("", address).split(".")
+    while isinstance(node, dict) and len(parts) > 2 and parts[0] == "module":
+        calls = node.get("module_calls")
+        call = calls.get(parts[1]) if isinstance(calls, dict) else None
+        node, parts = call.get("module") if isinstance(call, dict) else None, parts[2:]
+    if not isinstance(node, dict) or not isinstance(node.get("resources"), list):
+        return None
+    for res in node["resources"]:
+        if isinstance(res, dict) and res.get("address") == ".".join(parts):
+            expressions = res.get("expressions", {})
+            return expressions if isinstance(expressions, dict) else None
+    return None
+
+
+def config_sets(node, path: tuple[str, ...], root: bool = True) -> bool:
+    """Whether the configuration assigns the attribute at path. Anything it cannot place counts as set."""
+    if isinstance(node, list):
+        return not node or any(config_sets(n, path, root) for n in node)
+    if not isinstance(node, dict) or not path:
+        return True
+    if not root and (not node or "constant_value" in node or "references" in node):
+        return True
+    if path[0] in node:
+        return config_sets(node[path[0]], path[1:], False)
+    # A computed attribute is absent next to its configured siblings. An absent enclosing block is a
+    # dynamic block, which the configuration does not list.
+    return len(path) > 1
+
+
+def attr_flags(change: dict, expressions: dict | None = None) -> tuple[bool, bool]:
+    """(iam, network) from the attributes a change touches, for resources whose type does not say.
+
+    expressions is the resource's configuration (config_expressions); None counts every unknown attribute.
+    """
     before, after = change.get("before") or {}, change.get("after") or {}
     if not isinstance(before, dict) or not isinstance(after, dict):
         return False, False
-    unknown = change.get("after_unknown") or {}
-    if before:
-        changed = {
-            k for k in set(before) | set(after) | set(unknown) if before.get(k) != after.get(k) or unknown.get(k)
-        }
-    else:  # a create sets every attribute; only the ones given a value count
-        changed = {k for k, v in after.items() if v not in (None, "", [], {}, False)}
+    names: set[tuple[str, bool]] = set()
+    for path, unknown, value in changed_paths(before, after, change.get("after_unknown")):
+        if not path:
+            continue
+        if not before:  # a create sets every attribute; only the ones given a value count
+            if unknown:
+                if expressions is not None and not config_sets(expressions, path):
+                    continue
+            elif value is False:
+                if not NEGATED_PUBLIC.search(path[-1]):
+                    continue
+            elif value in (None, "", [], {}):
+                continue
+        names.update((k, i > 0) for i, k in enumerate(path))
     newly_world = bool(WORLD.search(json.dumps(after))) and not WORLD.search(json.dumps(before))
-    public_on = any(after.get(k) is True and before.get(k) is not True for k in after if "public" in k.lower())
-    network = newly_world or public_on or any(EXPOSURE_ATTR.search(k) for k in changed)
-    iam = any(IAM_ATTR.search(k) for k in changed)
+    network = newly_world or any(EXPOSURE_ATTR.search(k) for k, _ in names)
+    iam = any(IAM_ATTR.search(k) and not (nested and NESTED_NOT_IAM_ATTR.search(k)) for k, nested in names)
     return iam, network
 
 
@@ -121,6 +200,21 @@ def action_kind(actions: list[str]) -> str:
     if len(actions) == 1:
         return actions[0]
     return "+".join(actions)
+
+
+def valid_change(change) -> bool:
+    if not isinstance(change, dict):
+        return False
+    actions = change.get("actions")
+    if not isinstance(actions, list) or not actions or not all(isinstance(x, str) and x for x in actions):
+        return False
+    return all(change.get(k) is None or isinstance(change.get(k), dict) for k in ("before", "after", "after_unknown"))
+
+
+def scope_match(address: str, pattern: str) -> bool:
+    """Glob with * and ? only: an address index such as [0] or ["a"] is literal text, not a character class."""
+    regex = "".join(".*" if c == "*" else "." if c == "?" else re.escape(c) for c in pattern)
+    return bool(re.fullmatch(regex, address, re.S))
 
 
 def redact(value, mask):
@@ -135,39 +229,62 @@ def redact(value, mask):
 
 
 def change_diff(change: dict) -> dict:
+    """At most DIFF_KEYS changed attributes, IAM and exposure names first, with a marker when any are left out."""
     before = redact(change.get("before") or {}, change.get("before_sensitive"))
     after = redact(change.get("after") or {}, change.get("after_sensitive"))
     if not isinstance(before, dict) or not isinstance(after, dict):
         return {"sensitive": True}
-    unknown = change.get("after_unknown") or {}
-    if not after:
-        return {"deleted": {k: before[k] for k in list(before)[:20]}}
+    unknown = change.get("after_unknown")
+    unknown = unknown if isinstance(unknown, dict) else {}
+    if before and not after and not has_unknown(unknown):
+        keys, deleted = list(before), True
+    else:
+        keys = [k for k in {*before, *after, *unknown} if before.get(k) != after.get(k) or has_unknown(unknown.get(k))]
+        deleted = False
+    keys.sort(key=lambda k: (not (IAM_ATTR.search(k) or EXPOSURE_ATTR.search(k)), k))
     diff = {}
-    for k in sorted(set(before) | set(after) | set(unknown)):
-        if before.get(k) != after.get(k) or unknown.get(k):
-            new = "(known after apply)" if unknown.get(k) is True else after.get(k)
-            diff[k] = {"before": before.get(k), "after": new} if before else new
-        if len(diff) >= 20:
-            break
+    for k in keys[:DIFF_KEYS]:
+        new = "(known after apply)" if unknown.get(k) is True else after.get(k)
+        diff[k] = before[k] if deleted else {"before": before.get(k), "after": new} if before else new
+    if deleted:
+        diff = {"deleted": diff}
+    if len(keys) > DIFF_KEYS:
+        diff["(truncated)"] = f"{len(keys) - DIFF_KEYS} more changed attribute(s) not shown"
     text = json.dumps(diff)
     return diff if len(text) <= 4000 else {"truncated": text[:4000]}
+
+
+def validate_plan(plan) -> None:
+    hint = "pass the output of `show -json <planfile>`"
+    if not isinstance(plan, dict):
+        raise usage_error(f"the plan JSON is not an object; {hint}")
+    changes = plan.get("resource_changes", [])
+    if not isinstance(changes, list):
+        raise usage_error(f"resource_changes is not a list; {hint}")
+    for i, rc in enumerate(changes):
+        if not isinstance(rc, dict) or not all(isinstance(rc.get(k), str) and rc.get(k) for k in ("address", "type")):
+            raise usage_error(f"resource_changes[{i}] is not an object with an address and a type; {hint}")
 
 
 def summarize_plan(
     plan: dict, scope: list[str], predicate: bool, allow_iam: bool = False, allow_network: bool = False
 ) -> dict:
+    validate_plan(plan)
     counts: dict[str, int] = {}
     changes = []
     for rc in plan.get("resource_changes", []):
-        change = rc.get("change", {})
-        kind = action_kind(change.get("actions", ["no-op"]))
+        change = rc.get("change")
+        # A change the summary cannot read is never a no-op: it is listed and fails the predicate.
+        kind = action_kind(change["actions"]) if valid_change(change) else "unrecognized"
+        if kind == "unrecognized":
+            change = {}
         if change.get("importing") and kind == "no-op":
             kind = "import"
         counts[kind] = counts.get(kind, 0) + 1
         if kind in ("no-op", "read"):
             continue
-        rtype, addr = rc.get("type", ""), rc.get("address", "")
-        attr_iam, attr_network = attr_flags(change)
+        rtype, addr = rc["type"], rc["address"]
+        attr_iam, attr_network = attr_flags(change, config_expressions(plan, addr))
         changes.append(
             {
                 "address": addr,
@@ -177,13 +294,13 @@ def summarize_plan(
                 "stateful": bool(STATEFUL.search(rtype)),
                 "iam": (bool(IAM.search(rtype)) and not NOT_IAM.search(rtype)) or attr_iam,
                 "network": bool(NETWORK.search(rtype)) or attr_network,
-                "in_scope": (not scope) or any(fnmatch.fnmatchcase(addr, p) for p in scope),
-                "diff": change_diff(rc.get("change", {})),
+                "in_scope": (not scope) or any(scope_match(addr, p) for p in scope),
+                "diff": change_diff(change),
             }
         )
-    destructive = [c for c in changes if c["action"] in ("delete", "replace", "forget")]
+    destructive = [c for c in changes if c["action"] == "replace" or {"delete", "forget"} & set(c["action"].split("+"))]
     out_of_scope = [c for c in changes if not c["in_scope"]]
-    unknown = [c for c in changes if c["action"] not in ("create", "update", "import", "delete", "replace", "forget")]
+    unknown = [c for c in changes if c["action"] not in ACTIONS]
     result = {
         "counts": counts,
         "changes": changes,
@@ -196,6 +313,8 @@ def summarize_plan(
     }
     if predicate:
         reasons = []
+        if not scope:
+            reasons.append("no scope; the predicate needs --scope or --scope-file")
         if result["errored"]:
             reasons.append("the plan errored")
         if destructive:
@@ -217,7 +336,7 @@ def summarize_plan(
 
 
 def plan_summary_text(r: dict) -> str:
-    lines = ["counts: " + ", ".join(f"{k} {v}" for k, v in sorted(r["counts"].items())) or "counts: none"]
+    lines = ["counts: " + (", ".join(f"{k} {v}" for k, v in sorted(r["counts"].items())) or "none")]
     for label, key in (
         ("delete/replace/forget", "destructive"),
         ("stateful", "stateful"),
@@ -237,14 +356,23 @@ def plan_summary_text(r: dict) -> str:
 def cmd_plan_summary(a) -> int:
     try:
         plan = json.loads(Path(a.plan).read_text() if a.plan != "-" else sys.stdin.read())
-    except (OSError, ValueError) as e:
+    except (OSError, ValueError, RecursionError) as e:
         return fail(a, f"cannot read plan JSON: {e}; pass a plan file or - for stdin", EXIT_USAGE)
-    scope = list(a.scope or [])
+    scope = [p for p in a.scope or [] if p.strip()]
     if a.scope_file:
-        scope += [
-            ln.strip() for ln in Path(a.scope_file).read_text().splitlines() if ln.strip() and not ln.startswith("#")
-        ]
-    r = summarize_plan(plan, scope, a.predicate, a.allow_iam, a.allow_network)
+        try:
+            lines = Path(a.scope_file).read_text().splitlines()
+        except (OSError, ValueError) as e:
+            return fail(a, f"cannot read the scope file: {e}", EXIT_USAGE)
+        scope += [ln.strip() for ln in lines if ln.strip() and not ln.strip().startswith("#")]
+    if a.predicate and not scope:
+        return fail(a, "--predicate needs a scope: pass --scope GLOB or --scope-file FILE", EXIT_USAGE)
+    try:
+        r = summarize_plan(plan, scope, a.predicate, a.allow_iam, a.allow_network)
+    except CliError as e:
+        return fail(a, str(e), e.code)
+    except RecursionError:
+        return fail(a, "the plan JSON is nested too deeply to read", EXIT_USAGE)
     failed = bool(a.predicate) and not r["predicate"]["pass"]
     emit(r, a.json, plan_summary_text(r), ok=not failed, errors=r["predicate"]["reasons"] if failed else None)
     return EXIT_FAIL if failed else EXIT_OK
@@ -1233,13 +1361,17 @@ def main() -> int:
         epilog=epilog([], ["0  done, or the grant predicate holds", "1  the grant predicate fails", "2  usage error"]),
     )
     p.add_argument("plan", help="output of `show -json <planfile>`, or - for stdin")
-    p.add_argument("--scope", action="append", help="address glob inside the intended scope (repeatable)")
-    p.add_argument("--scope-file", help="file with one address glob per line")
+    p.add_argument(
+        "--scope",
+        action="append",
+        help='address glob inside the intended scope (repeatable); * and ? are wildcards, [0] and ["k"] are literal',
+    )
+    p.add_argument("--scope-file", help="file with one address glob per line; # starts a comment line")
     p.add_argument(
         "--predicate",
         action="store_true",
         help="check the grant predicate: no delete, replace, or forget; every change in scope; "
-        "no IAM or network change unless allowed",
+        "no IAM or network change unless allowed. Needs --scope or --scope-file",
     )
     p.add_argument("--allow-iam", action="store_true", help="the grant names IAM changes")
     p.add_argument("--allow-network", action="store_true", help="the grant names network changes")

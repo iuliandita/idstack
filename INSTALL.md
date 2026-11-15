@@ -276,7 +276,7 @@ older than 4.4, which prints only `ok`, `errors`, and `exit_code`.
 | `idstack check` | none |
 | `idstack build` | `check`, and `stale` (with `--check`) or `wrote` (otherwise): lists of generated files |
 | `idstack doctor` | `checks`: objects with `name`, `status` (`ok`, `warn`, `fail`, `skip`), `detail` |
-| `idstack plan-summary` | `counts`, `changes`, `destructive`, `stateful`, `iam`, `network`, `out_of_scope`, `errored`, and `predicate` (`pass`, `reasons`, `scope`) with `--predicate`; `errors` holds the failed reasons |
+| `idstack plan-summary` | `counts`, `changes`, `destructive`, `stateful`, `iam`, `network`, `out_of_scope`, `errored`, and `predicate` (`pass`, `reasons`, `scope`) with `--scope GLOB --predicate`; `errors` holds the failed reasons |
 | `idstack judge BATTERY ITEMS` | `used`, `battery`, `model`, `results` (objects with `id`, `outcome`, `answers`, `error`) |
 | `idstack judge BATTERY --eval` | `battery`, `report` (per split), `pass` |
 | `idstack judge BATTERY --example` | `battery`, `item_key`, `questions`, `items` |
