@@ -51,8 +51,7 @@ puts the pinned markdownlint in `.github/tools/markdownlint/node_modules` (git-i
 
 ## For agents
 
-- `python3 bin/idstack check` and `python3 scripts/check.py` are the same repo check; there is no single command that runs
-  every check, so run the whole Commands block before pushing.
+- `python3 bin/idstack check` is `python3 scripts/check.py`; no single command runs every check, so run the whole Commands block.
 - Every `idstack` and `install.sh` command accepts `--json`: one object with `ok` and `errors`, human output on stderr.
 - Exit codes, both: 0 done, 1 failed or check found a problem, 2 usage error. `install.sh` exits 3 when a required
   tool is missing or too old. `idstack judge` exits 3 when a Jev call failed and 4 without `TYPESAFE_API_KEY`.
