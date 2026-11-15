@@ -15,7 +15,8 @@
 
 ## Requirements
 
-- `bash`, `git`, and Python 3.11 or later (standard library only).
+- `bash` 4.4 or later, `git`, and Python 3.11 or later (standard library only). The script exits 3
+  on an older bash or Python. macOS ships bash 3.2: install a newer one and run the script with it.
 - At least one harness: Claude Code 2.1.275 or later, Codex CLI with `codex plugin`, or OpenCode.
 - Network access to GitHub.
 
@@ -34,13 +35,14 @@ cd idstack
 | `--check` | Report what is installed and what is missing. Changes nothing. |
 | `--dry-run` | Print the commands an install would run. Changes nothing. |
 | `--source SRC` | Install idstack from `owner/repo`, a git URL, or a local checkout. Default: `iuliandita/idstack`. |
-| `--ref REF` | Branch or tag for a remote source: `main` (stable, the default), `develop` (nightly), or a tag such as `v1.0.0`. An existing clone keeps its branch. |
+| `--ref REF` | Branch or tag for a remote source: `main` (stable, the default), `develop` (nightly), or a tag such as `v1.0.0`. An existing clone is moved to it. |
 | `--force` | Back up and replace skill folders that share a name with a pstack skill, and pstack model files idstack did not write. |
 | `--no-models` | Leave pstack's per-role model files alone. |
 | `--uninstall` | Remove idstack and the model files it wrote. pstack stays. |
 
 Running the script twice is safe. Each step checks the current state first and skips what is
-already done.
+already done. `--check`, `--dry-run`, and `--uninstall` are separate modes: passing more than one
+is a usage error.
 
 ## What the script does on each harness
 
@@ -241,7 +243,10 @@ Every harness: link `bin/idstack` from the clone into a directory on your PATH, 
 
 This removes idstack, its subagent links, the CLI link, the Codex guard hook if it installed one,
 and the model files it wrote, and leaves pstack in place. Guard settings in `~/.config/idstack` and
-logs in `~/.local/state/idstack` stay; delete them by hand if you want. To remove pstack too:
+logs in `~/.local/state/idstack` stay; delete them by hand if you want. If a guard hook cannot be
+removed (for example it sits in an `opencode.jsonc`, which the CLI does not edit), the script says
+so, keeps the CLI link the hook calls, removes the rest, and exits 1. Remove the entry by hand and
+run it again. To remove pstack too:
 
 - Claude Code: `claude plugin uninstall pstack@cursor-plugins`.
 - Codex and OpenCode: delete the folders listed in `~/.agents/skills/.pstack-install.json`, then
@@ -262,7 +267,8 @@ logs in `~/.local/state/idstack` stay; delete them by hand if you want. To remov
 `install.sh` and every `idstack` subcommand accept `--json`. The command prints exactly one JSON
 object to stdout and nothing else there; human output goes to stderr. Exit codes are the same as
 without `--json`. Every object has `ok` (true when the exit code is 0) and `errors` (a list of
-strings, empty when `ok` is true), plus the keys below.
+strings, empty when `ok` is true), plus the keys below. The one exception is `install.sh` on a bash
+older than 4.4, which prints only `ok`, `errors`, and `exit_code`.
 
 | Command | Keys besides `ok` and `errors` |
 | --- | --- |
@@ -317,4 +323,4 @@ touches nothing else, which is how CI tests the script.
 | 0 | Done, or (with `--check`) everything is installed. |
 | 1 | A step failed, or (with `--check`) something is missing. |
 | 2 | Usage error. |
-| 3 | A required tool is missing. |
+| 3 | A required tool is missing or too old. |

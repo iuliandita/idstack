@@ -2,6 +2,17 @@
 # Install idstack and its pstack dependency for Claude Code, Codex, and OpenCode.
 set -euo pipefail
 
+# Everything down to this guard has to parse and run on bash 3.2, which macOS still ships.
+if [ -z "${BASH_VERSINFO:-}" ] || [ "${BASH_VERSINFO[0]}" -lt 4 ] \
+  || { [ "${BASH_VERSINFO[0]}" -eq 4 ] && [ "${BASH_VERSINFO[1]}" -lt 4 ]; }; then
+  msg="install.sh needs bash 4.4 or later, this is ${BASH_VERSION:-not bash}; install a newer bash and run it with that"
+  printf 'error: %s\n' "$msg" >&2
+  case " $* " in
+    *" --json "*) printf '{"ok": false, "errors": ["%s"], "exit_code": 3}\n' "$msg" ;;
+  esac
+  exit 3
+fi
+
 PSTACK_MIRROR_URL="https://github.com/backnotprop/pstack.git"
 PSTACK_MIRROR_REF="6c75f4e67546c2ddbf9634734c1e3ebbea34861a"
 CURSOR_MARKETPLACE="cursor/plugins"
@@ -19,6 +30,7 @@ IDSTACK_SRC=""
 SUPPORTED=(claude codex opencode)
 HARNESSES=()
 MODE=install
+MODE_FLAG=""
 SOURCE="iuliandita/idstack"
 REF=main
 FORCE=0
@@ -90,7 +102,7 @@ Options:
                   local checkout. Default: iuliandita/idstack.
   --ref REF       Branch or tag for a remote source: main (stable, the default),
                   develop (nightly), or a release tag such as v1.0.0. An existing
-                  clone keeps its branch. Ignored for a local checkout.
+                  clone is moved to it. Ignored for a local checkout.
   --force         Back up and replace existing skill folders that collide with
                   pstack skills, and pstack model files idstack did not write.
   --no-models     Leave pstack's per-role model files alone.
@@ -114,7 +126,7 @@ Exit codes:
   0  done, or (with --check) everything is installed
   1  a step failed, or (with --check) something is missing
   2  usage error
-  3  a required tool is missing
+  3  a required tool is missing or too old
 EOF
 }
 
@@ -183,6 +195,15 @@ else:
 
 is_local_source() { [[ -d $SOURCE ]]; }
 
+set_mode() {
+  if [[ -n $MODE_FLAG && $MODE_FLAG != "$1" ]]; then
+    err "$MODE_FLAG and $1 cannot be combined; pass one of --check, --dry-run, --uninstall"
+    exit 2
+  fi
+  MODE_FLAG=$1
+  MODE=${1#--}
+}
+
 parse_args() {
   while [[ $# -gt 0 ]]; do
     case $1 in
@@ -197,9 +218,7 @@ parse_args() {
           esac
         done
         shift 2 ;;
-      --check) MODE=check; shift ;;
-      --dry-run) MODE=dry-run; shift ;;
-      --uninstall) MODE=uninstall; shift ;;
+      --check|--dry-run|--uninstall) set_mode "$1"; shift ;;
       --source)
         [[ $# -ge 2 ]] || { err "--source needs a value"; exit 2; }
         SOURCE=$2; shift 2 ;;
@@ -488,11 +507,31 @@ idstack_checkout() {
   [[ $url == */* && $url != *://* && $url != git@* ]] && url="https://github.com/$url.git"
   IDSTACK_SRC="$IDSTACK_CACHE_DIR/src"
   [[ $MODE == dry-run ]] && return
-  if [[ -d $IDSTACK_SRC/.git ]]; then
-    git -C "$IDSTACK_SRC" pull -q --ff-only
-  else
+  if [[ ! -d $IDSTACK_SRC/.git ]]; then
     mkdir -p "$IDSTACK_CACHE_DIR"
-    git clone -q -b "$REF" "$url" "$IDSTACK_SRC"
+    git clone -q "$url" "$IDSTACK_SRC" || { err "could not clone $url into $IDSTACK_SRC"; exit 1; }
+  fi
+  checkout_ref "$IDSTACK_SRC" || {
+    err "could not check out $REF in $IDSTACK_SRC (from $url); check --ref, or move that folder away and rerun"
+    exit 1
+  }
+}
+
+checkout_ref() {
+  # checkout_ref <clone>: a branch is fast-forwarded to origin, a tag is checked out detached
+  local repo=$1
+  git -C "$repo" fetch -q --tags origin || return 1
+  if git -C "$repo" show-ref --verify -q "refs/remotes/origin/$REF"; then
+    if git -C "$repo" show-ref --verify -q "refs/heads/$REF"; then
+      git -C "$repo" checkout -q "$REF" || return 1
+    else
+      git -C "$repo" checkout -q -b "$REF" --track "origin/$REF" || return 1
+    fi
+    git -C "$repo" merge -q --ff-only "origin/$REF"
+  elif git -C "$repo" show-ref --verify -q "refs/tags/$REF"; then
+    git -C "$repo" checkout -q --detach "refs/tags/$REF"
+  else
+    return 1
   fi
 }
 
@@ -576,13 +615,44 @@ cli_install() {
   case ":$PATH:" in *":$IDSTACK_BIN_DIR:"*) ;; *) warn "$IDSTACK_BIN_DIR is not on PATH" ;; esac
 }
 
+guard_registered() {
+  # guard_registered <codex|opencode>: true when a config file names the idstack guard; sets GUARD_FILE
+  local dir files mark
+  if [[ $1 == codex ]]; then
+    files=("${CODEX_HOME:-$HOME/.codex}/hooks.json")
+    mark="idstack guard hook"
+  else
+    dir=${XDG_CONFIG_HOME:-$HOME/.config}/opencode
+    files=("$dir/opencode.json" "$dir/opencode.jsonc")
+    mark="harness/opencode/guard"
+  fi
+  for GUARD_FILE in "${files[@]}"; do
+    [[ -f $GUARD_FILE ]] && grep -qF -- "$mark" "$GUARD_FILE" && return 0
+  done
+  return 1
+}
+
 cli_uninstall() {
   log "idstack CLI"
-  local link=$IDSTACK_BIN_DIR/idstack
-  [[ -L $link && $(readlink "$link") == */bin/idstack ]] || { log "  no idstack link at $link"; return; }
-  # Remove the guard hooks first: they call this checkout.
-  wants codex && run "$link" guard uninstall --harness codex
-  wants opencode && run "$link" guard uninstall --harness opencode
+  local link=$IDSTACK_BIN_DIR/idstack exe h kept=0
+  [[ -L $link && $(readlink "$link") == */bin/idstack ]] || { log "  no idstack link at $link"; return 0; }
+  # A dangling link cannot run, so this checkout removes the hooks for it.
+  exe=$link
+  [[ -x $link ]] || exe=$SCRIPT_DIR/bin/idstack
+  # Remove the guard hooks first: they call the checkout behind the link.
+  for h in codex opencode; do
+    if ! wants "$h" || ! guard_registered "$h"; then continue; fi
+    "$exe" guard uninstall --harness "$h" || true
+    if guard_registered "$h"; then
+      err "could not remove the $h guard from $GUARD_FILE; remove its entry by hand and rerun --uninstall"
+      FAILED=1
+      kept=1
+    fi
+  done
+  if [[ $kept -eq 1 && -x $link ]]; then
+    log "  kept $link: a guard hook still calls it"
+    return 0
+  fi
   run rm "$link"
 }
 
@@ -663,6 +733,10 @@ main() {
   done
   parse_args "$@"
   need python3 git
+  if ! python3 -I -c 'import sys; sys.exit(sys.version_info < (3, 11))' >/dev/null 2>&1; then
+    err "python3 is too old: found $(python3 -V 2>&1 | head -n 1), need Python 3.11 or later"
+    exit 3
+  fi
   detect_harnesses
   local h
   for h in "${HARNESSES[@]}"; do
@@ -713,6 +787,10 @@ main() {
       wants codex && codex_uninstall
       wants opencode && opencode_uninstall
       models_step --uninstall
+      if [[ $FAILED -ne 0 ]]; then
+        err "uninstall finished with errors"
+        exit 1
+      fi
       log "Done. pstack was left in place."
       ;;
   esac
