@@ -374,7 +374,7 @@ older than 4.4, which prints only `ok`, `errors`, and `exit_code`.
 | --- | --- |
 | `install.sh` (every mode) | `warnings` (list of strings), `mode` (`install`, `dry-run`, `check`, `uninstall`), `dry_run`, `exit_code`, `source`, `harnesses` (list), `components` (with `--check`: objects with `name`, `state`, `detail`, the model files included), `commands` (with `--dry-run`: the commands that would run, and a one-line description of each step the script takes itself) |
 | `idstack check` | none |
-| `idstack build` | `check`, and `stale` (with `--check`) or `wrote` (otherwise): lists of generated files |
+| `idstack build` | `check`, and `stale` (with `--check`) or `wrote` and `removed` (otherwise): lists of generated files |
 | `idstack doctor` | `checks`: objects with `name`, `status` (`ok`, `warn`, `fail`, `skip`), `detail` |
 | `idstack plan-summary` | `counts`, `changes`, `destructive`, `stateful`, `iam`, `network`, `out_of_scope`, `errored`, and `predicate` (`pass`, `reasons`, `scope`) with `--scope GLOB --predicate`; `errors` holds the failed reasons |
 | `idstack judge BATTERY ITEMS` | `used`, `battery`, `model`, `results` (objects with `id`, `outcome`, `answers`, `error`) |
@@ -414,7 +414,7 @@ The CLI itself reads:
 | `IDSTACK_STATE_DIR` | `$XDG_STATE_HOME/idstack` (`~/.local/state/idstack`) | Guard log and allow-once tokens. |
 | `IDSTACK_GUARD_MODE` | unset | `log` or `ask`: raises the guard mode above the config file's. It never lowers it, and an unknown value means `ask`. |
 | `TYPESAFE_API_KEY` | unset | Jev. Without it, `idstack judge` exits 4 and playbooks use their deterministic checks; a failed call exits 3. |
-| `IDSTACK_JEV_URL` | `https://api.typesafe.ai/v1/systemone` | The Jev endpoint. |
+| `IDSTACK_JEV_URL` | `https://api.typesafe.ai/v1/systemone` | The Jev endpoint. It must be https, and redirects are not followed. |
 
 Pointing all of the installer's variables at a temporary directory gives an isolated install that
 touches nothing else, which is how CI tests the script. An empty variable counts as unset.

@@ -156,6 +156,7 @@ jobs:
             echo "IDSTACK_CACHE_DIR=$root/cache"
             echo "IDSTACK_BIN_DIR=$root/bin"
             echo "OPENCODE_AGENTS_DIR=$root/opencode/agents"
+            echo "IDSTACK_CONFIG_DIR=$root/idstack-config"
           } >> "$GITHUB_ENV"
           mkdir -p "$root/codex"
 
