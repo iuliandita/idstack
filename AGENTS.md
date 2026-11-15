@@ -56,5 +56,5 @@ puts the pinned markdownlint in `.github/tools/markdownlint/node_modules` (git-i
 - Every `idstack` and `install.sh` command accepts `--json`: one object with `ok` and `errors`, human output on stderr.
 - Exit codes: 0 done, 1 failed or check found a problem, 2 usage error, 3 a required tool is missing.
   `idstack judge` exits 4 without `TYPESAFE_API_KEY`. The contract is in [INSTALL.md](INSTALL.md).
-- `idstack plan-summary PLAN.json --predicate` is the deterministic gate for Terraform and OpenTofu plans.
+- `idstack plan-summary PLAN.json --scope GLOB --predicate` is the deterministic gate for Terraform and OpenTofu plans.
 - `python3 bin/idstack doctor` reports what is installed; `scripts/eval.py` runs headless behavioral evals.
