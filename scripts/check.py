@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""Repository checks for idstack. Run from anywhere: python3 scripts/check.py [--json]."""
+"""Repository checks for idstack. Run from anywhere: python3 scripts/check.py [--json].
+
+Exit codes: 0 clean, 1 a check found a problem, 2 usage error.
+"""
 
 import json
 import re
@@ -10,7 +13,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 NAME = "idstack"
 DEPENDENCY = {"name": "pstack", "marketplace": "cursor-plugins"}
-TEXT_SUFFIXES = {".md", ".json", ".yml", ".yaml", ".py", ".sh", ".toml", ".txt", ""}
+TEXT_SUFFIXES = {".md", ".json", ".yml", ".yaml", ".py", ".sh", ".toml", ".txt", ".js", ".jsonc", ""}
 
 
 def tracked_files() -> list[Path]:
@@ -52,7 +55,8 @@ def check_manifests(findings: list[str]) -> None:
     claude_plugin = load_json(ROOT / ".claude-plugin/plugin.json", findings)
     claude_market = load_json(ROOT / ".claude-plugin/marketplace.json", findings)
     codex_market = load_json(ROOT / ".agents/plugins/marketplace.json", findings)
-    if None in (plugin, claude_plugin, claude_market, codex_market):
+    codex_plugin = load_json(ROOT / ".codex-plugin/plugin.json", findings)
+    if None in (plugin, claude_plugin, claude_market, codex_market, codex_plugin):
         return
 
     claude_entry = next((p for p in claude_market.get("plugins", []) if p.get("name") == NAME), None)
@@ -70,6 +74,7 @@ def check_manifests(findings: list[str]) -> None:
         "plugin.json": plugin.get("version"),
         ".claude-plugin/plugin.json": claude_plugin.get("version"),
         ".claude-plugin/marketplace.json entry": (claude_entry or {}).get("version"),
+        ".codex-plugin/plugin.json": codex_plugin.get("version"),
     }
     if len(set(versions.values())) != 1 or None in versions.values():
         findings.append(f"manifest versions differ: {versions}")
@@ -83,29 +88,27 @@ def check_manifests(findings: list[str]) -> None:
     if DEPENDENCY["marketplace"] not in claude_market.get("allowCrossMarketplaceDependenciesOn", []):
         findings.append(".claude-plugin/marketplace.json: allowCrossMarketplaceDependenciesOn must list cursor-plugins")
 
-    version = plugin.get("version")
+    check_changelog(plugin.get("version"), findings)
+
+
+def check_changelog(version: object, findings: list[str]) -> None:
+    """An Unreleased section alone does not count: the manifest version needs its own."""
     changelog_path = ROOT / "CHANGELOG.md"
     if not changelog_path.exists():
         findings.append("CHANGELOG.md: missing")
         return
-    changelog = changelog_path.read_text()
-    if "## Unreleased" not in changelog and f"## [{version}]" not in changelog:
-        findings.append(f"CHANGELOG.md: needs a '## Unreleased' or '## [{version}]' section")
-
-
-def check_installer(findings: list[str]) -> None:
-    text = (ROOT / "install.sh").read_text()
-    if not re.search(r'^PSTACK_MIRROR_REF="[0-9a-f]{40}"$', text, re.M):
-        findings.append("install.sh: PSTACK_MIRROR_REF must be a full 40-character commit")
+    if not re.search(rf"^## \[{re.escape(str(version))}\]", changelog_path.read_text(), re.M):
+        findings.append(f"CHANGELOG.md: needs a '## [{version}]' section for the manifest version")
 
 
 def check_pstack(findings: list[str]) -> None:
+    """Covers the mirror pin in install.sh too; pstack_watch owns that rule."""
     import pstack_watch
 
-    if not pstack_watch.LOCK.exists():
-        findings.append("config/pstack-lock.json: missing; run scripts/pstack_watch.py --update-lock")
-        return
-    findings.extend(pstack_watch.check_offline(json.loads(pstack_watch.LOCK.read_text())))
+    lock, problem = pstack_watch.read_lock()
+    if problem:
+        findings.append(problem)
+    findings.extend(pstack_watch.check_offline(lock))
 
 
 def frontmatter_name(path: Path) -> str | None:
@@ -174,13 +177,20 @@ def check_private_patterns(files: list[Path], findings: list[str]) -> None:
 
 
 def main() -> int:
-    as_json = "--json" in sys.argv[1:]
+    args = sys.argv[1:]
+    as_json = "--json" in args
+    unknown = [a for a in args if a != "--json"]
+    if unknown:
+        message = f"unknown argument {unknown[0]}; usage: check.py [--json]"
+        print(f"error: {message}", file=sys.stderr)
+        if as_json:
+            print(json.dumps({"ok": False, "errors": [message]}))
+        return 2
     files = tracked_files()
     findings: list[str] = []
     check_ascii(files, findings)
     check_json_files(files, findings)
     check_manifests(findings)
-    check_installer(findings)
     check_pstack(findings)
     check_skills(findings)
     check_links(files, findings)

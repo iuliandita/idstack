@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Write pstack's per-role model files from config/pstack-models.json and the user's overrides.
 
-Usage: pstack_models.py [--target claude|agents ...] [--check|--dry-run|--uninstall|--show] [--force]
+Usage: pstack_models.py [--target claude|agents ...] [--check [--porcelain]|--dry-run|--uninstall|--show] [--force]
 
 Overrides: $IDSTACK_CONFIG_DIR/models.json (default ~/.config/idstack/models.json), the same shape as
 config/pstack-models.json with only the keys to change. Objects merge key by key; anything else replaces.
@@ -57,7 +57,7 @@ ROLES = (
 def user_config_path() -> Path:
     base = (
         os.environ.get("IDSTACK_CONFIG_DIR")
-        or Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "idstack"
+        or Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config") / "idstack"
     )
     return Path(base) / "models.json"
 
@@ -73,6 +73,8 @@ def load_config() -> dict:
     path = user_config_path()
     if path.is_file():
         over = json.loads(path.read_text())
+        if not isinstance(over, dict):
+            raise ValueError(f"{path}: must hold a JSON object")
         if {"claude", "agents"} & set(over):
             raise ValueError(
                 f'{path}: per-harness "claude"/"agents" sections are gone; put roles in one top-level "roles"'
@@ -80,15 +82,42 @@ def load_config() -> dict:
         unknown = set(over) - set(config)
         if unknown:
             raise ValueError(f"{path}: unknown keys {sorted(unknown)}; expected {sorted(config)}")
-        config = merge(config, over)
+        merged = merge(config, over)
+        wrong = misshapen(config, merged)
+        if wrong:
+            raise ValueError(f"{path}: {'; '.join(wrong)}")
+        config = merged
     return config
 
 
+KINDS = {dict: "an object", str: "a string", list: "a list"}
+
+
+def misshapen(base, merged, where: str = "") -> list[str]:
+    """Where an override changed the kind of a value: a role that is not a string, a section that is not an object."""
+    if type(base) is not type(merged):
+        return [f"{where} must be {KINDS.get(type(base), type(base).__name__)}"]
+    if isinstance(base, dict):
+        # Keys the defaults lack (a new role, a new provider) take the kind of their siblings.
+        kinds = {type(v) for v in base.values()}
+        like = next(iter(base.values())) if len(kinds) == 1 else None
+        return [
+            e
+            for k, v in merged.items()
+            if k in base or like is not None
+            for e in misshapen(base.get(k, like), v, f"{where}.{k}".lstrip("."))
+        ]
+    if isinstance(base, list):
+        return [f"{where} must be a list of strings"] if not all(isinstance(v, str) for v in merged) else []
+    return []
+
+
 def target_path(target: str) -> Path:
+    # An empty variable counts as unset, as it does in install.sh.
     home = Path.home()
     if target == "claude":
-        return Path(os.environ.get("CLAUDE_CONFIG_DIR", home / ".claude")) / "rules" / "pstack-models.md"
-    skills = Path(os.environ.get("AGENTS_SKILLS_DIR", home / ".agents" / "skills"))
+        return Path(os.environ.get("CLAUDE_CONFIG_DIR") or home / ".claude") / "rules" / "pstack-models.md"
+    skills = Path(os.environ.get("AGENTS_SKILLS_DIR") or home / ".agents" / "skills")
     return skills.parent / "pstack-models.md"
 
 
@@ -135,7 +164,7 @@ def resolve(value: str, harness: str, reachable: set[str]) -> list[str]:
     for member in (v.strip() for v in value.split(",")):
         pick = "parent"
         for group in [] if member in ("inherit-parent", "auto") else member.split(" else "):
-            options = [OPTION.match(o.strip()).groups() for o in group.split(" or ")]
+            options = [m.groups() for o in group.split(" or ") if (m := OPTION.match(o.strip()))]
             options = [(m, e, via or harness) for m, e, via in options]
             home = [o for o in options if o[2] == harness]
             found = home or [o for o in options if o[2] in reachable]
@@ -189,6 +218,9 @@ def validate(roles: dict[str, str], t3: dict) -> list[str]:
                     errors.append(f"{role}: {option!r} is not '<model> <effort> [via <provider>]'")
                     continue
                 model, effort, via = m.groups()
+                if via == "claude":
+                    errors.append(f"{role}: unknown provider 'claude'; Claude Code is 'claudeAgent'")
+                    continue
                 # Without `via` the option runs on whichever harness reads the file.
                 found = [problems(model, effort, p) for p in ((via,) if via else ("claude", "codex", "opencode"))]
                 if all(found):
@@ -229,7 +261,7 @@ def render(spec: dict, t3: dict) -> str:
 
 
 def backup(path: Path) -> Path:
-    dest = path.parent / ".idstack-backups" / time.strftime("%Y%m%d-%H%M%S") / path.name
+    dest = path.parent / ".idstack-backups" / time.strftime("%Y%m%dT%H%M%SZ", time.gmtime()) / path.name
     dest.parent.mkdir(parents=True, exist_ok=True)
     shutil.move(path, dest)
     return dest
@@ -249,9 +281,18 @@ def main() -> int:
         help="print what each role runs on from this harness, with the provider CLIs on this PATH",
     )
     ap.add_argument("--force", action="store_true", help="back up and replace a file idstack did not write")
+    ap.add_argument("--porcelain", action="store_true", help="with --check: target, state, detail, tab-separated")
     args = ap.parse_args()
     targets = args.target or ["claude", "agents"]
 
+    if args.uninstall:
+        # Needs no config: a broken models.json must not stop an uninstall halfway.
+        for target in targets:
+            path = target_path(target)
+            if path.exists() and MARKER_PREFIX in path.read_text():
+                path.unlink()
+                print(f"  removed {path}")
+        return 0
     try:
         config = load_config()
     except ValueError as e:
@@ -267,18 +308,20 @@ def main() -> int:
         for role in ROLES:
             print(f"  {role}: {' + '.join(resolve(config['roles'][role], harness, reachable))}")
         return 0
-    if not args.uninstall:
-        errors = [
-            f"t3.{provider}.cli.{kind}: needs a command with {{model}} and {{effort}}"
-            for provider, spec in config["t3"].items()
-            for kind in ("read", "write")
-            if not all(f in spec.get("cli", {}).get(kind, "") for f in ("{model}", "{effort}"))
-        ]
-        errors += validate(config["roles"], config["t3"])
-        if errors:
-            for e in errors:
-                print(f"error: {e}", file=sys.stderr)
-            return 3
+    errors = [
+        f"t3.{provider}.cli.{kind}: needs a command with {{model}} and {{effort}}"
+        for provider, spec in config["t3"].items()
+        for kind in ("read", "write")
+        if not all(f in spec.get("cli", {}).get(kind, "") for f in ("{model}", "{effort}"))
+    ]
+    errors += [
+        f"t3.{p}.option: needs the name of its effort option" for p, v in config["t3"].items() if "option" not in v
+    ]
+    errors += validate(config["roles"], config["t3"])
+    if errors:
+        for e in errors:
+            print(f"error: {e}", file=sys.stderr)
+        return 3
 
     rc = 0
     for target in targets:
@@ -286,34 +329,20 @@ def main() -> int:
         current = path.read_text() if path.exists() else None
         managed = current is not None and MARKER_PREFIX in current
         label = f"pstack models ({target})"
-        if args.uninstall:
-            if managed:
-                path.unlink()
-                print(f"  removed {path}")
-            continue
+        # A file without the marker is the user's own: it is left alone and is not a failure.
+        yours = current is not None and not managed and not args.force
         wanted = render(config, config["t3"])
         if args.check:
-            state = (
-                "ok"
-                if current == wanted
-                else "absent"
-                if current is None
-                else "outdated"
-                if managed
-                else "not managed by idstack"
-            )
-            print(f"  {label:<28} {state} ({path})")
+            state = "ok" if current == wanted or yours else "absent" if current is None else "outdated"
+            detail = f"yours, not managed by idstack: {path}" if yours and current != wanted else str(path)
+            print(f"{target}\t{state}\t{detail}" if args.porcelain else f"  {label:<28} {state} ({detail})")
             rc |= state != "ok"
             continue
         if current == wanted:
             print(f"  {label}: current")
             continue
-        if current is not None and not managed and not args.force:
-            print(
-                f"error: {path} was not written by idstack; rerun with --force to back it up and replace it",
-                file=sys.stderr,
-            )
-            rc = 1
+        if yours:
+            print(f"  {label}: {path} is yours, left alone; --force backs it up and replaces it")
             continue
         if args.dry_run:
             print(f"would write {path}")

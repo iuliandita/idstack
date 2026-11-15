@@ -19,7 +19,26 @@
     "* 6 * * 1"
   ],
   "minimumReleaseAge": "7 days",
+  "customManagers": [
+    {
+      "customType": "regex",
+      "description": "Tool versions in workflow files, each under a `# renovate: datasource=... depName=...` comment",
+      "managerFilePatterns": [
+        "/^\\.github/workflows/[^/]+\\.ya?ml$/"
+      ],
+      "matchStrings": [
+        "# renovate: datasource=(?<datasource>[a-z-]+) depName=(?<depName>\\S+)(?: extractVersion=(?<extractVersion>\\S+))?\\n\\s+[A-Za-z_]+: \"(?<currentValue>[^\"]+)\""
+      ]
+    }
+  ],
   "packageRules": [
+    {
+      "matchManagers": [
+        "custom.regex"
+      ],
+      "semanticCommitType": "deps",
+      "semanticCommitScope": "ci"
+    },
     {
       "matchManagers": [
         "github-actions"

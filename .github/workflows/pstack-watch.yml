@@ -29,12 +29,12 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-          GITHUB_TOKEN: ${{ github.token }}
           TITLE: pstack changed upstream or the mirror pin is behind
         run: |
-          set -uo pipefail
-          python3 scripts/pstack_watch.py --report "$RUNNER_TEMP/body.md"
-          rc=$?
+          set -euo pipefail
+          # Exit 1 is drift. Anything else non-zero (usage, network, unreadable lock) fails the job.
+          rc=0
+          python3 scripts/pstack_watch.py --report "$RUNNER_TEMP/body.md" || rc=$?
           if [ "$rc" -gt 1 ]; then
             exit "$rc"
           fi
@@ -45,6 +45,10 @@ jobs:
               gh issue close "$number" --comment "pstack, the mirror pin, and the lock agree again."
             fi
             exit 0
+          fi
+          if [ ! -s "$RUNNER_TEMP/body.md" ]; then
+            echo "::error::pstack_watch.py reported drift but wrote no report body"
+            exit 1
           fi
           if [ -n "$number" ]; then
             gh issue edit "$number" --body-file "$RUNNER_TEMP/body.md"

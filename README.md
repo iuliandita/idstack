@@ -10,7 +10,9 @@ your permissions, so changes to live state stop at a gate.
 
 Status: stable since v1.0.0. `main` is the stable channel and `develop` the nightly. The router,
 playbooks, principles, subagents, `idstack` CLI, opt-in guard, and setup skill ship on Claude Code,
-Codex, and OpenCode. See the [roadmap](docs/plan.md#15-roadmap).
+Codex, and OpenCode. The Phase 6 exit criteria (a user guide, each playbook reviewed against real
+use, two weeks of daily use without a gate bypass) are still open in [#26](https://github.com/iuliandita/idstack/issues/26).
+See the [roadmap](docs/plan.md#15-roadmap).
 
 ## Install
 
@@ -252,10 +254,10 @@ idstack adds none of these and calls some of them from its playbooks.
 | `install.sh` | shipped | Installs pstack where missing, then idstack, on Claude Code, Codex, and OpenCode |
 | pstack model files | shipped | Per-role models from `config/pstack-models.json` plus your overrides, routed across providers through T3 Code or each provider's CLI, with a native fallback |
 | `scripts/check.py` | shipped | ASCII, manifests, links, router catalog against playbook files, names |
-| `idstack plan-summary` | shipped | Deterministic Terraform/OpenTofu plan summary and grant predicate (`--predicate`, exit 1 on fail) |
+| `idstack plan-summary` | shipped | Deterministic Terraform/OpenTofu plan summary and grant predicate (`--scope GLOB --predicate`, exit 1 on fail) |
 | `idstack judge` | shipped | Runs one Jev battery from `src/questions/`; `--eval` checks it against labeled cases ([calibration](docs/jev-calibration.md)) |
 | `idstack doctor` | shipped | Harnesses, pstack, domain skills, infra CLIs, Jev key, guard mode; `--live` probes kube write access read-only |
-| `idstack guard` | shipped | Opt-in hook: `log` or `ask` mode, `allow-once` tokens for harnesses that cannot ask, optional Jev for ambiguous commands |
+| `idstack guard` | shipped | Opt-in hook: `log` or `ask` mode, `allow-once` tokens, bound to the command and its directory, for harnesses that cannot ask, optional Jev for ambiguous commands |
 | `idstack build` | shipped | Generates Codex agent TOML, OpenCode agents, and Codex skill policies from the sources |
 | `/idstack:setup` | shipped | Doctor report, model files, guard mode and install, Jev |
 | Codex and OpenCode subagent files | shipped | `id-agent`, `plan-reader`, `change-verifier`, linked by `install.sh` |

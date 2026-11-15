@@ -15,7 +15,8 @@
 
 ## Requirements
 
-- `bash`, `git`, and Python 3.11 or later (standard library only).
+- `bash` 4.4 or later, `git`, and Python 3.11 or later (standard library only). The script exits 3
+  on an older bash or Python. macOS ships bash 3.2: install a newer one and run the script with it.
 - At least one harness: Claude Code 2.1.275 or later, Codex CLI with `codex plugin`, or OpenCode.
 - Network access to GitHub.
 
@@ -33,14 +34,15 @@ cd idstack
 | `--harness LIST` | `claude`, `codex`, `opencode`, comma-separated. Default: every harness whose CLI is on PATH. |
 | `--check` | Report what is installed and what is missing. Changes nothing. |
 | `--dry-run` | Print the commands an install would run. Changes nothing. |
-| `--source SRC` | Install idstack from `owner/repo`, a git URL, or a local checkout. Default: `iuliandita/idstack`. |
-| `--ref REF` | Branch or tag for a remote source: `main` (stable, the default), `develop` (nightly), or a tag such as `v1.0.0`. An existing clone keeps its branch. |
+| `--source SRC` | Install idstack from `owner/repo`, a git URL, or a local checkout. A checkout is written as a path (`/abs`, `./rel`, `../rel`, or `.`); a path that is not a directory is a usage error. Default: `iuliandita/idstack`. |
+| `--ref REF` | Branch or tag for a remote source: `main` (stable, the default), `develop` (nightly), or a tag such as `v1.0.0`. An existing clone is moved to it; a marketplace that already exists keeps the ref it was added with. |
 | `--force` | Back up and replace skill folders that share a name with a pstack skill, and pstack model files idstack did not write. |
 | `--no-models` | Leave pstack's per-role model files alone. |
-| `--uninstall` | Remove idstack and the model files it wrote. pstack stays. |
+| `--uninstall` | Remove idstack and the model files it wrote. pstack stays. With `--harness`, pieces another harness still uses stay too. |
 
 Running the script twice is safe. Each step checks the current state first and skips what is
-already done.
+already done. `--check`, `--dry-run`, and `--uninstall` are separate modes: passing more than one
+is a usage error.
 
 ## What the script does on each harness
 
@@ -63,11 +65,15 @@ commit in `PSTACK_MIRROR_REF` at the top of `install.sh`.
 1. Fetches that commit with git and lists its skill folders.
 2. Stops if any of those names already exists in `~/.agents/skills` and was not installed by this
    script. Rerun with `--force` to back the existing folders up and replace them.
-3. Copies the skills into `~/.agents/skills`, which both Codex and OpenCode read, and records the
-   commit and skill names in `~/.agents/skills/.pstack-install.json`.
+3. Copies the skills into a staging folder inside `~/.agents/skills`, which both Codex and OpenCode
+   read, then renames each one into place.
+4. Records the skill names in `~/.agents/skills/.pstack-install.json` before the first rename and
+   adds the commit after the last. A manifest without a commit means the copy did not finish:
+   `--check` reports it as `incomplete` and the next run redoes it.
 
-If `~/.agents/skills/poteto-mode` already exists and the script did not install it, the script
-leaves it alone and reports it as installed outside the script.
+If `~/.agents/skills/poteto-mode` already exists and there is no manifest, the script leaves it
+alone and reports it as installed outside the script. A manifest that lists anything other than a
+plain folder name stops the run before a folder is deleted.
 
 **Codex: idstack.** Adds this repo as the `idstack` marketplace and runs
 `codex plugin add idstack@idstack`. Codex plugins cannot ship subagents, so the script links
@@ -95,13 +101,95 @@ idstack guard install --harness opencode   # adds the plugin to ~/.config/openco
 idstack guard test kubectl delete pod x    # prints the match, runs nothing
 ```
 
+On Codex the plugin loads the guard hook itself, from `hooks/codex.json` (named in
+`.codex-plugin/plugin.json`); `/hooks` lists it as "idstack guard" under the plugin. Trust it there
+after installing and again after each plugin update. With the plugin installed and enabled,
+`guard install --harness codex` writes nothing to `$CODEX_HOME/hooks.json` and removes an entry an
+earlier run left there, so one guard hook runs, not two. Without the plugin it adds the entry as
+before. `guard uninstall --harness codex` removes only that entry; turn the plugin's hook off in
+`/hooks`.
+
 Both install commands back up the file they edit, and `guard uninstall --harness <codex|opencode>`
 removes only idstack's entry. A config written as `opencode.jsonc` is left alone: add
 `{"package": "<clone>/harness/opencode/guard"}` to its `plugins` list by hand.
 
-Codex and OpenCode cannot ask, so in `ask` mode they block a matching command. After you approve
-it, run `idstack guard allow-once '<command>'` in your own terminal, quoting the exact text the agent
-used (any difference, even in spaces, needs a new approval), and let the agent rerun it.
+Codex and OpenCode cannot ask, so in `ask` mode they block a matching command, and the message names
+the directory the hook saw. After you approve it, run
+`idstack guard allow-once --cwd <that directory> '<command>'` in your own terminal, quoting the exact
+text the agent used, and let the agent rerun it. `--cwd` defaults to the current directory. The
+approval covers that text in that directory once: any difference, even in spaces, or another
+directory needs a new one. `guard test` and `guard allow-once` without a command exit 2.
+
+**What the guard holds.** It reads a command the way a shell does: quotes, comments, redirections,
+heredocs, command substitutions, and commands behind a launcher (`xargs`, `eval`, `find -exec`,
+`uv run`, `ssh`, `bash -c`, and so on). It also holds what it cannot read:
+
+- text it cannot parse, when that text names a tool the rules cover;
+- commands nested more than four levels deep, and `-c` with no command;
+- a shell or `ssh` fed by a pipe or here-string, when the text names a tool the rules cover, also
+  when the shell is told to read standard input (`-`, `/dev/stdin`);
+- a command that runs something its own words do not show, when the command line names a tool the
+  rules cover: `xargs` and `parallel` (unless they launch a command that only reads data, such as
+  `grep` or `wc`), `find -exec` and `fd -x`, `env -S`, `sed` and `awk` with anything but a plain
+  print, delete, or substitute script, and `tar`, `rsync`, `sort`, `man`, `rg`, `scp`, `wget`, or
+  `bat` given an option that runs a command. The guard does not rebuild what they will run. An
+  argument of a command that only reads data, such as a `grep` pattern, does not count as naming a
+  tool, so `grep -rn kubectl docs | awk -F: '{print $1}'` passes and
+  `kubectl get pods -o name | xargs kubectl describe` is held;
+- a shell call whose payload carries no command;
+- a tool that needs no verb, such as `ansible-playbook`, behind any command the guard does not know.
+
+A comment is read as well, so one that spells out a state-mutating command is held.
+
+**What the rules cover.** [src/guard/patterns.toml](src/guard/patterns.toml) is the list. Besides
+Terraform and OpenTofu (now also `refresh`, `test`, and `init -migrate-state`), Kubernetes, Helm,
+ArgoCD, Flux, Ansible, Velero, Proxmox, and libvirt, it holds:
+
+- `aws`, `gcloud`, and `az`: deletes and stops, IAM grants and policy writes, security-group and
+  firewall opens, deploys, remote commands (`ssm send-command`, `compute ssh`, `vm run-command`),
+  and public-access flags such as `--publicly-accessible`;
+- `pulumi`, `helmfile`, `eksctl`, `gsutil`, `vault` delete and revoke, and `docker compose down -v`;
+- `gh pr merge`, `gh workflow run`, `gh run rerun`, and `glab mr merge`, `glab ci run`, `retry`,
+  and `trigger`;
+- on a remote host only (behind `ssh`): `rm`, `kill`, `dd`, `mkfs`, `service` start and stop,
+  `zfs` and `zpool destroy`, `lvremove`, `docker rm`, package removal, and `systemctl` and reboot
+  as before. `rsync --delete` is held when its target is a remote host;
+- a shell command that writes to the guard's own files: it redirects into `guard.json` or
+  `guard-allow.json`, or names them or the guard's config or state directory in a command other
+  than a plain reader such as `cat`, `jq`, or `grep`.
+
+A heredoc is skipped only when nothing after it can run it (`cat` to a file, `gh ... --body-file -`),
+so a commit message or PR body that mentions a destructive command passes. A quoted string that is
+data, such as a `grep` pattern, passes too.
+
+The plugin hooks for Claude Code and Codex and the OpenCode plugin start `hooks/guard_hook.py`,
+which runs the CLI. If the CLI cannot be loaded (Python older than 3.11, a damaged checkout), it
+holds every shell command while the mode is `ask` or `guard.json` cannot be read, and does nothing
+otherwise. The entry `guard install --harness codex` writes to `$CODEX_HOME/hooks.json` starts the
+same file. An entry written by an earlier version calls the CLI directly and has no such fallback:
+run `guard uninstall --harness codex` and install again to replace it.
+
+The guard creates its state directory with mode `0700` and its log with `0600`, because the log keeps
+the first 500 characters of each held command.
+
+Limits:
+
+- The tests check what the classifier and the hook answer, not that a harness blocks on that answer.
+  Codex and OpenCode live behavior is unverified.
+- `allow-once` binds the command text and the directory. It cannot bind a plan file: a plan that
+  changed after the approval still applies under the same command.
+- `ansible-playbook --check` and `ansible --check` count as safe, although a play can set
+  `check_mode: false` on a task and change hosts during a check run.
+- Aliases, scripts, variables, and code passed to an interpreter (`python3 -c`, `awk`) are not read.
+- Plain `git push` is not held, to any branch or with `--force`. Protect branches on the forge.
+- The hooks match the shell tool only (`Bash`). A file-edit tool call is not a shell command, so
+  the guard does not see an agent that edits `guard.json` or `guard-allow.json` that way. The rule
+  for the guard's own files reads names as written: a glob or a `cd` into the directory hides them.
+- Cloud rules name the common grant, network, deploy, and remote-command verbs, not every write a
+  provider CLI can make. `pulumi`, `helmfile`, `eksctl`, and `gsutil` verbs were taken from their
+  documentation, the others from the installed CLI's help.
+- With `--jev on`, each ambiguous command the rules did not match is sent to the judge endpoint
+  with secret values masked, together with the working directory.
 
 ## pstack model files
 
@@ -182,9 +270,10 @@ Claude models against the list in the JSON, Codex models and efforts against
 OpenCode models against `opencode models`, and DeepSeek Flash efforts against the list in the JSON. A CLI that is missing or signed out is skipped with a warning.
 
 Each file carries a `managed by idstack` line. The script replaces only files with that line. If
-you ran `/setup-pstack` yourself, it leaves your file alone and reports it; `--force` backs it up
-to `.idstack-backups/` next to the file and replaces it. Delete the marker line to keep your own
-edits, or set overrides as above and rerun `./install.sh`. To run the step on its own:
+you ran `/setup-pstack` yourself, it leaves your file alone and says so; `--check` counts such a
+file as fine. `--force` backs it up to `.idstack-backups/` next to the file and replaces it. Delete
+the marker line to keep your own edits, or set overrides as above and rerun `./install.sh`. To run
+the step on its own:
 
 ```sh
 python3 scripts/pstack_models.py --check
@@ -222,7 +311,11 @@ Every harness: link `bin/idstack` from the clone into a directory on your PATH, 
 
 ## Check, update, and channels
 
-- `./install.sh --check` exits 0 when everything is installed and 1 when something is missing.
+- `./install.sh --check` exits 0 when everything is installed and 1 when something is missing. It
+  also reports a link whose target is gone, an agent or skill in the source that is not linked yet,
+  a pstack skill folder that was deleted, and a CLI link that is not idstack's.
+- `--source` given again with another value moves the clone in `~/.local/share/idstack/src` to it. A
+  harness marketplace is not moved: the script warns and names the command that removes it.
 - `git pull` in your clone, then `./install.sh`, updates idstack on every harness. The pstack mirror
   is reinstalled when the pinned commit changes.
 - Claude Code leaves auto-update off for third-party marketplaces. Turn it on in `/plugin`, on the
@@ -239,9 +332,19 @@ Every harness: link `bin/idstack` from the clone into a directory on your PATH, 
 ./install.sh --uninstall
 ```
 
-This removes idstack, its subagent links, the CLI link, the Codex guard hook if it installed one,
-and the model files it wrote, and leaves pstack in place. Guard settings in `~/.config/idstack` and
-logs in `~/.local/state/idstack` stay; delete them by hand if you want. To remove pstack too:
+This removes idstack, its subagent links, the CLI link, the Codex and OpenCode guard hooks if it
+installed them, and the model files it wrote, and leaves pstack in place. Guard settings in
+`~/.config/idstack` and logs in `~/.local/state/idstack` stay; delete them by hand if you want.
+
+With `--harness`, only that harness is removed. The CLI link stays while any other harness still
+has idstack, and `~/.agents/pstack-models.md` stays while Codex or OpenCode does. A harness whose
+CLI is not on PATH still loses its links and model file; the script warns that the plugin itself
+was not touched and prints the command that removes it.
+
+If a guard hook cannot be
+removed (for example it sits in an `opencode.jsonc`, which the CLI does not edit), the script says
+so, keeps the CLI link the hook calls, removes the rest, and exits 1. Remove the entry by hand and
+run it again. To remove pstack too:
 
 - Claude Code: `claude plugin uninstall pstack@cursor-plugins`.
 - Codex and OpenCode: delete the folders listed in `~/.agents/skills/.pstack-install.json`, then
@@ -256,21 +359,24 @@ logs in `~/.local/state/idstack` stay; delete them by hand if you want. To remov
 - **Claude Code says the pstack dependency was not found.** Add the marketplace with
   `/plugin marketplace add cursor/plugins` and install again.
 - **A partial install.** Run `./install.sh --check` to see what is missing, then `./install.sh` again.
+  A pstack copy that was interrupted shows as `incomplete` and is redone from the start.
+- **A step failed.** The failed command is in `errors` and on stderr, and the exit code is 1.
 
 ## JSON output
 
 `install.sh` and every `idstack` subcommand accept `--json`. The command prints exactly one JSON
 object to stdout and nothing else there; human output goes to stderr. Exit codes are the same as
 without `--json`. Every object has `ok` (true when the exit code is 0) and `errors` (a list of
-strings, empty when `ok` is true), plus the keys below.
+strings, empty when `ok` is true), plus the keys below. The one exception is `install.sh` on a bash
+older than 4.4, which prints only `ok`, `errors`, and `exit_code`.
 
 | Command | Keys besides `ok` and `errors` |
 | --- | --- |
-| `install.sh` (every mode) | `warnings` (list of strings), `mode` (`install`, `dry-run`, `check`, `uninstall`), `dry_run`, `exit_code`, `source`, `harnesses` (list), `components` (with `--check`: objects with `name`, `state`, `detail`), `commands` (with `--dry-run`: the commands that would run) |
+| `install.sh` (every mode) | `warnings` (list of strings), `mode` (`install`, `dry-run`, `check`, `uninstall`), `dry_run`, `exit_code`, `source`, `harnesses` (list), `components` (with `--check`: objects with `name`, `state`, `detail`, the model files included), `commands` (with `--dry-run`: the commands that would run, and a one-line description of each step the script takes itself) |
 | `idstack check` | none |
-| `idstack build` | `check`, and `stale` (with `--check`) or `wrote` (otherwise): lists of generated files |
+| `idstack build` | `check`, and `stale` (with `--check`) or `wrote` and `removed` (otherwise): lists of generated files |
 | `idstack doctor` | `checks`: objects with `name`, `status` (`ok`, `warn`, `fail`, `skip`), `detail` |
-| `idstack plan-summary` | `counts`, `changes`, `destructive`, `stateful`, `iam`, `network`, `out_of_scope`, `errored`, and `predicate` (`pass`, `reasons`, `scope`) with `--predicate`; `errors` holds the failed reasons |
+| `idstack plan-summary` | `counts`, `changes`, `destructive`, `stateful`, `iam`, `network`, `out_of_scope`, `errored`, and `predicate` (`pass`, `reasons`, `scope`) with `--scope GLOB --predicate`; `errors` holds the failed reasons |
 | `idstack judge BATTERY ITEMS` | `used`, `battery`, `model`, `results` (objects with `id`, `outcome`, `answers`, `error`) |
 | `idstack judge BATTERY --eval` | `battery`, `report` (per split), `pass` |
 | `idstack judge BATTERY --example` | `battery`, `item_key`, `questions`, `items` |
@@ -278,8 +384,8 @@ strings, empty when `ok` is true), plus the keys below.
 | `idstack guard test` | `match`, `hits`, `source` |
 | `idstack guard enable`, `disable` | `mode`, `jev` |
 | `idstack guard status` | `config`, `recent` |
-| `idstack guard allow-once` | `allowed`, `ttl` |
-| `idstack guard install`, `uninstall` | `harness`, `path`, `uninstall`, `changed`, `dry_run` and `config` (with `--dry-run`) |
+| `idstack guard allow-once` | `allowed`, `ttl`, `cwd` |
+| `idstack guard install`, `uninstall` | `harness`, `path`, `uninstall`, `changed`, `dry_run` and `config` (with `--dry-run`), `plugin_hook` (Codex: the plugin's hook file, or null) |
 
 `idstack guard hook` is the harness hook protocol. It reads and writes the harness's own JSON and
 has no `--json` flag. A usage error (an unknown option or battery) also prints
@@ -296,6 +402,7 @@ has no `--json` flag. A usage error (an unknown option or battery) also prints
 | `IDSTACK_CACHE_DIR` | `~/.local/share/idstack` | The idstack clone OpenCode links and the CLI link point into. |
 | `IDSTACK_BIN_DIR` | `~/.local/bin` | Where the `idstack` CLI is linked. |
 | `OPENCODE_AGENTS_DIR` | `~/.config/opencode/agents` | Where idstack subagents are linked for OpenCode. |
+| `IDSTACK_CONFIG_DIR` | `$XDG_CONFIG_HOME/idstack` (`~/.config/idstack`) | Where `models.json`, your model overrides, is read from. |
 | `XDG_CONFIG_HOME` | `~/.config` | Base of the OpenCode skills and agents defaults. |
 | `XDG_DATA_HOME` | `~/.local/share` | Base of the `IDSTACK_CACHE_DIR` default. |
 
@@ -303,18 +410,30 @@ The CLI itself reads:
 
 | Variable | Default | Used for |
 | --- | --- | --- |
-| `IDSTACK_CONFIG_DIR` | `$XDG_CONFIG_HOME/idstack` (`~/.config/idstack`) | Guard settings. |
+| `IDSTACK_CONFIG_DIR` | `$XDG_CONFIG_HOME/idstack` (`~/.config/idstack`) | Guard settings and `models.json`. |
 | `IDSTACK_STATE_DIR` | `$XDG_STATE_HOME/idstack` (`~/.local/state/idstack`) | Guard log and allow-once tokens. |
-| `IDSTACK_GUARD_MODE` | unset | `off`, `log`, or `ask`, overriding the config file. |
+| `IDSTACK_GUARD_MODE` | unset | `log` or `ask`: raises the guard mode above the config file's. It never lowers it, and an unknown value means `ask`. |
 | `TYPESAFE_API_KEY` | unset | Jev. Without it, `idstack judge` exits 4 and playbooks use their deterministic checks; a failed call exits 3. |
-| `IDSTACK_JEV_URL` | `https://api.typesafe.ai/v1/systemone` | The Jev endpoint. |
+| `IDSTACK_JEV_URL` | `https://api.typesafe.ai/v1/systemone` | The Jev endpoint. It must be https, and redirects are not followed. |
 
 Pointing all of the installer's variables at a temporary directory gives an isolated install that
-touches nothing else, which is how CI tests the script.
+touches nothing else, which is how CI tests the script. An empty variable counts as unset.
+
+`install.sh` exits with:
 
 | Exit code | Meaning |
 | --- | --- |
 | 0 | Done, or (with `--check`) everything is installed. |
 | 1 | A step failed, or (with `--check`) something is missing. |
 | 2 | Usage error. |
-| 3 | A required tool is missing. |
+| 3 | A required tool is missing or too old. |
+
+The `idstack` CLI exits with:
+
+| Exit code | Meaning |
+| --- | --- |
+| 0 | Done. |
+| 1 | Failed, or a check found a problem. |
+| 2 | Usage error. |
+| 3 | `idstack judge` only: a Jev call failed. The items it failed for are unsettled. |
+| 4 | `idstack judge` only: `TYPESAFE_API_KEY` is not set, so nothing was sent. |

@@ -4,7 +4,7 @@
 
 For a Terraform or OpenTofu change, from edit to verified apply. Load **terraform** for the domain. The gate block, grants, and predicates are in `references/gates.md`.
 
-1. Find the repo's rules: whether an agent ever applies here, whether apply is manual or CI-driven, which git events deploy, the binary (Terraform or OpenTofu) and its pinned version, and where state lives. Record them. Repo rules win.
+1. Find the repo's rules: whether an agent ever applies here, whether apply is manual or CI-driven, which git events deploy, the binary (Terraform or OpenTofu) and its pinned version, and where state lives. Record them. Stricter repo rules win.
 2. Pin the target: backend, workspace, and cloud identity per `references/targets.md`.
 3. Check state before planning: the backend is reachable, the state serial and lineage look current, and there is no stray local state file. A state that looks older than the last known apply stops here. A restored stale state planned against live infrastructure is how an agent destroyed a production stack and its snapshots in February 2026.
 4. Make the change. Prefer `moved`, `import`, and `removed` blocks (with `destroy = false` when the real resource stays) over state commands, because they show up in the plan.
@@ -14,7 +14,7 @@ For a Terraform or OpenTofu change, from edit to verified apply. Load **terrafor
    Jev decision point (optional): `idstack plan-summary plan.json --json | jq '.changes'` into `idstack judge plan-reading -`. Any `flag` or `unsettled` resource (holds persistent data, or widens IAM, above 0.3) fails a predicate grant and moves plan reading to the `hardest tasks` model. Network exposure is checked in code from the plan, not by Jev.
 8. For repos grouped by tenant or risk, split into targeted plans per group, one file each, lowest risk first.
 9. Run **Opening a PR** with the plan summary in the body. Merging does not apply unless step 1 found that it does; if it does, the merge is the gate in step 10.
-10. **Gate:** apply the saved plan file and nothing else. A predicate grant passes this gate only when `idstack plan-summary plan.json --scope ... --predicate` exits 0 against the reviewed `plan.json`, and its output is logged.
+10. **Gate:** apply the saved plan file and nothing else. A predicate grant passes this gate only when `idstack plan-summary plan.json --scope ... --predicate` exits 0 against the reviewed `plan.json`, and its output is logged. When CI applies on merge, the merge is this gate and its evidence is CI's own plan for the commit being merged, summarized as in step 7, not the local plan. If CI publishes no plan before it applies, the gate block says that CI recomputes the plan and may apply something the local plan does not show, and no predicate grant passes.
 11. Re-plan after the apply. Expect no changes. Anything else is drift or a partial apply: stop and report it.
 12. Run the gate's verification query with `change-verifier` and log the result.
 

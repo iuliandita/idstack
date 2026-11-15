@@ -6,7 +6,8 @@
   pstack_watch.py --update-lock    network: rewrite config/pstack-lock.json and the README version
 
 Environment: GITHUB_TOKEN or GH_TOKEN raises the GitHub API rate limit.
-Exit codes: 0 in sync, 1 drift or failed check, 2 usage error, 3 network or upstream failure.
+Exit codes: 0 in sync, 1 drift or failed check, 2 usage error, 3 network or upstream failure,
+4 --report cannot read config/pstack-lock.json.
 """
 
 import json
@@ -28,6 +29,21 @@ MIRROR = "backnotprop/pstack"
 ALWAYS_WATCHED = ("skills/poteto-mode/SKILL.md", "skills/setup-pstack/SKILL.md")
 VERSION_RE = re.compile(r"as of pstack (\d+\.\d+\.\d+)")
 OVERLAY_RE = re.compile(r"Read the shared playbook first: pstack `poteto-mode/playbooks/([a-z-]+)\.md`")
+PIN_RE = re.compile(r'^PSTACK_MIRROR_REF="([0-9a-f]{40})"$', re.M)
+PIN_FINDING = "install.sh: PSTACK_MIRROR_REF must be a full 40-character commit"
+UPSTREAM_VERSION_RE = re.compile(r"\d+\.\d+\.\d+")
+UPSTREAM_NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
+LOCK_FIX = "run scripts/pstack_watch.py --update-lock"
+EXIT_NO_LOCK = 4
+
+
+class WatchError(Exception):
+    """--update-lock cannot write a lock from what it found."""
+
+
+def upstream_failure(message: str) -> SystemExit:
+    print(f"error: {message}", file=sys.stderr)
+    return SystemExit(3)
 
 
 def http(url: str, api: bool = False) -> str:
@@ -89,55 +105,113 @@ def watched_paths(catalog: dict) -> list[str]:
     return sorted(paths)
 
 
-def installer_ref() -> str:
-    match = re.search(r'^PSTACK_MIRROR_REF="([0-9a-f]{40})"$', INSTALLER.read_text(), re.M)
-    if not match:
-        raise SystemExit("error: install.sh: PSTACK_MIRROR_REF must be a full 40-character commit; fix install.sh")
-    return match.group(1)
+def installer_ref() -> str | None:
+    """The mirror pin in install.sh, or None when it is not a full 40-character commit."""
+    match = PIN_RE.search(INSTALLER.read_text())
+    return match.group(1) if match else None
+
+
+def checked_version(value: object, source: str) -> str:
+    """Versions end up in the issue body and the README, so only X.Y.Z gets through."""
+    if not isinstance(value, str) or not UPSTREAM_VERSION_RE.fullmatch(value):
+        raise upstream_failure(f"{source}: version {value!r} is not X.Y.Z; check the upstream plugin.json")
+    return value
 
 
 def snapshot() -> dict:
     head = api(f"repos/{UPSTREAM}/commits/main")["sha"]
     tree = api(f"repos/{UPSTREAM}/git/trees/{head}:{UPSTREAM_PATH}?recursive=1")
     if tree.get("truncated"):
-        print("error: upstream tree listing was truncated; list pstack/ by directory instead", file=sys.stderr)
-        raise SystemExit(3)
+        raise upstream_failure("upstream tree listing was truncated; list pstack/ by directory instead")
     blobs = {e["path"]: e["sha"] for e in tree["tree"] if e["type"] == "blob"}
+    catalog = {
+        "skills": sorted({p.split("/")[1] for p in blobs if p.startswith("skills/") and p.count("/") >= 2}),
+        "playbooks": sorted(
+            p.rsplit("/", 1)[1][:-3] for p in blobs if re.fullmatch(r"skills/poteto-mode/playbooks/[^/]+\.md", p)
+        ),
+        "agents": sorted(p[7:-3] for p in blobs if re.fullmatch(r"agents/[^/]+\.md", p)),
+    }
+    odd = sorted(n for names in catalog.values() for n in names if not UPSTREAM_NAME_RE.fullmatch(n))
+    if odd:
+        raise upstream_failure(f"upstream names {odd!r} hold characters the report cannot render safely")
+    plugin = json.loads(raw(UPSTREAM, head, f"{UPSTREAM_PATH}/plugin.json"))
     return {
         "commit": head,
-        "version": json.loads(raw(UPSTREAM, head, f"{UPSTREAM_PATH}/plugin.json"))["version"],
+        "version": checked_version(plugin.get("version"), f"{UPSTREAM}/{UPSTREAM_PATH}"),
         "blobs": blobs,
-        "catalog": {
-            "skills": sorted({p.split("/")[1] for p in blobs if p.startswith("skills/") and p.count("/") >= 2}),
-            "playbooks": sorted(
-                p.rsplit("/", 1)[1][:-3] for p in blobs if re.fullmatch(r"skills/poteto-mode/playbooks/[^/]+\.md", p)
-            ),
-            "agents": sorted(p[7:-3] for p in blobs if re.fullmatch(r"agents/[^/]+\.md", p)),
-        },
+        "catalog": catalog,
     }
 
 
 def mirror_version(ref: str) -> str:
-    return json.loads(raw(MIRROR, ref, "plugin.json"))["version"]
+    return checked_version(json.loads(raw(MIRROR, ref, "plugin.json")).get("version"), MIRROR)
 
 
 def build_lock(snap: dict) -> dict:
     ref = installer_ref()
+    if ref is None:
+        raise WatchError(f"{PIN_FINDING}; fix install.sh")
+    paths = watched_paths(snap["catalog"])
+    absent = [p for p in paths if p not in snap["blobs"]]
+    if absent:
+        raise WatchError(
+            f"upstream has no {', '.join(absent)}; fix the README.md rows or overlays that name them, then rerun"
+        )
     return {
         "upstream": {"repo": UPSTREAM, "path": UPSTREAM_PATH, "version": snap["version"], "commit": snap["commit"]},
         "mirror": {"repo": MIRROR, "ref": ref, "version": mirror_version(ref)},
         "catalog": snap["catalog"],
-        "watched": {p: snap["blobs"][p] for p in watched_paths(snap["catalog"])},
+        "watched": {p: snap["blobs"][p] for p in paths},
     }
 
 
-def check_offline(lock: dict) -> list[str]:
+def lock_gap(lock: object) -> str | None:
+    """The first field the rest of this script reads that the lock lacks or mistypes."""
+    if not isinstance(lock, dict):
+        return "the top level"
+    for section, keys in (("upstream", ("version", "commit")), ("mirror", ("ref", "version"))):
+        part = lock.get(section)
+        for key in keys:
+            if not isinstance(part, dict) or not isinstance(part.get(key), str):
+                return f"{section}.{key}"
+    catalog = lock.get("catalog")
+    for kind in ("skills", "playbooks", "agents"):
+        names = catalog.get(kind) if isinstance(catalog, dict) else None
+        if not isinstance(names, list) or not all(isinstance(n, str) for n in names):
+            return f"catalog.{kind}"
+    watched = lock.get("watched")
+    if not isinstance(watched, dict) or not all(isinstance(v, str) for v in watched.values()):
+        return "watched"
+    return None
+
+
+def read_lock() -> tuple[dict | None, str | None]:
+    """The lock, or None and why it cannot be used."""
+    if not LOCK.exists():
+        return None, f"config/pstack-lock.json: missing; {LOCK_FIX}"
+    try:
+        lock = json.loads(LOCK.read_text())
+    except (OSError, ValueError) as exc:
+        return None, f"config/pstack-lock.json: invalid JSON: {exc}; {LOCK_FIX}"
+    gap = lock_gap(lock)
+    if gap:
+        return None, f"config/pstack-lock.json: {gap} is missing or malformed; {LOCK_FIX}"
+    return lock, None
+
+
+def check_offline(lock: dict | None) -> list[str]:
+    """Findings that need no network. The pin rule holds with or without a usable lock."""
     findings = []
+    ref = installer_ref()
+    if ref is None:
+        findings.append(PIN_FINDING)
+    if lock is None:
+        return findings
     version = VERSION_RE.search(README.read_text())
     if not version or version.group(1) != lock["upstream"]["version"]:
         want = lock["upstream"]["version"]
         findings.append(f"README.md: 'as of pstack X' must say {want}; run scripts/pstack_watch.py --update-lock")
-    if installer_ref() != lock["mirror"]["ref"]:
+    if ref is not None and ref != lock["mirror"]["ref"]:
         findings.append("install.sh: PSTACK_MIRROR_REF differs from config/pstack-lock.json; run --update-lock")
     for name in sorted(used_names()):
         if resolve(name, lock["catalog"]) is None:
@@ -219,35 +293,43 @@ def main(argv: list[str]) -> int:
     mode = argv[0] if argv else ""
     if mode == "--update-lock":
         snap = snapshot()
-        LOCK.write_text(json.dumps(build_lock(snap), indent=2) + "\n")
-        text = VERSION_RE.sub(f"as of pstack {snap['version']}", README.read_text())
+        try:
+            lock = build_lock(snap)
+        except WatchError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
+        text, replaced = VERSION_RE.subn(f"as of pstack {snap['version']}", README.read_text())
+        if not replaced:
+            print("error: README.md: no 'as of pstack X.Y.Z' phrase to update; restore it, then rerun", file=sys.stderr)
+            return 1
+        LOCK.write_text(json.dumps(lock, indent=2) + "\n")
         README.write_text(text)
-        print(f"wrote {LOCK.relative_to(ROOT)} at pstack {snap['version']} ({snap['commit'][:7]})")
+        print(f"wrote config/pstack-lock.json at pstack {snap['version']} ({snap['commit'][:7]})")
         return 0
-    if not LOCK.exists():
-        print("error: config/pstack-lock.json is missing; run scripts/pstack_watch.py --update-lock", file=sys.stderr)
-        return 1
-    lock = json.loads(LOCK.read_text())
+    if mode not in ("--check", "--report"):
+        print(__doc__, file=sys.stderr)
+        return 2
+    lock, problem = read_lock()
     if mode == "--check":
-        findings = check_offline(lock)
+        findings = ([problem] if problem else []) + check_offline(lock)
         for finding in findings:
             print(f"error: {finding}", file=sys.stderr)
         print("ok" if not findings else f"{len(findings)} problem(s)")
         return 1 if findings else 0
-    if mode == "--report":
-        snap = snapshot()
-        diff = compare(lock, snap, mirror_version("main"), used_names())
-        if not drifted(diff):
-            print(f"in sync with pstack {snap['version']} ({snap['commit'][:7]})")
-            return 0
-        body = render(lock, snap, diff)
-        if len(argv) > 1:
-            Path(argv[1]).write_text(body)
-        else:
-            print(body, end="")
-        return 1
-    print(__doc__, file=sys.stderr)
-    return 2
+    if lock is None:
+        print(f"error: {problem}", file=sys.stderr)
+        return EXIT_NO_LOCK
+    snap = snapshot()
+    diff = compare(lock, snap, mirror_version("main"), used_names())
+    if not drifted(diff):
+        print(f"in sync with pstack {snap['version']} ({snap['commit'][:7]})")
+        return 0
+    body = render(lock, snap, diff)
+    if len(argv) > 1:
+        Path(argv[1]).write_text(body)
+    else:
+        print(body, end="")
+    return 1
 
 
 if __name__ == "__main__":

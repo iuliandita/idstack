@@ -6,6 +6,89 @@ v0.x was the prerelease phase, where breaking changes were expected.
 
 ## [Unreleased]
 
+## [1.1.3] - 2026-11-15
+
+This release tightens the gates. Plans and commands that passed before can now stop or ask; each
+change is listed under Security. The findings came from an independent review.
+
+### Security
+
+- `idstack plan-summary --predicate` needs `--scope` or `--scope-file` and exits 2 without one. A
+  change with a missing or malformed `change` or `actions` fails as an unrecognized action, and any
+  action list containing `delete` or `forget` is destructive.
+- The predicate's IAM and network detection reads nested attributes. On create it counts `false` on
+  `block_public_*`, `restrict_public_*`, and `ignore_public_*`, and unknown IAM or exposure
+  attributes when the plan's `configuration` sets them or cannot show them. A Kubernetes workload
+  that sets a container `port` now needs `--allow-network`, and one that sets
+  `service_account_name` needs `--allow-iam`.
+- Public IPs, EIPs, function URLs, CloudFront, and `kubernetes_service` count as network resources.
+  Scope globs treat `[0]` and `["key"]` as literal text; only `*` and `?` are wildcards.
+- `gates.md`: without the CLI a predicate grant cannot pass. The `jq` lines are a reading aid.
+- The guard holds commands it cannot read: unparsable text that names a covered tool, deep nesting,
+  a shell `-c` with no command, and a shell or `ssh` fed by a pipe, heredoc, or here-string. It
+  recognizes commands behind launchers, substitutions, and unknown flags.
+- The guard holds a command that runs something its own words do not show (`xargs`, `parallel`,
+  `find -exec`, `env -S`, non-trivial `sed` and `awk`, and `tar`, `rsync`, and similar with an
+  option that runs a command) whenever the command line names a covered tool. Some read-only
+  pipelines that pass a covered tool's output to `xargs` or `awk` now ask.
+- New guard rules: IAM grants, policy writes, firewall opens, deploys, remote commands, and
+  public-access flags for `aws`, `gcloud`, and `az`; `pulumi`, `helmfile`, `eksctl`, `gsutil`,
+  `vault` delete and revoke, and `docker compose down -v`; `gh` and `glab` merges and pipeline
+  runs; `terraform refresh`, `test`, and `init -migrate-state`; destructive host commands over
+  `ssh` and `rsync --delete` to a remote; and shell writes to the guard's own settings and
+  approval files. Plain `git push` is not held.
+- `guard allow-once` approvals are bound to the directory as well as the command text; pass `--cwd`
+  and quote the command as one argument. `IDSTACK_GUARD_MODE` can raise the mode but no longer
+  lower it. Guard state is created private (0700 directory, 0600 log).
+- The plugin hooks start through `hooks/guard_hook.py`, which holds commands in ask mode when the
+  CLI cannot load.
+- Codex: the plugin loads its own guard hook (`hooks/codex.json` through
+  `.codex-plugin/plugin.json`), shown as "idstack guard" in `/hooks` and answering `deny`. Before,
+  Codex ran the Claude Code hook, whose `ask` answer Codex treats as a failed hook and then runs
+  the command. Trust the hook again in `/hooks` after updating.
+- `idstack judge` and the guard's judge call treat any answer that is not a number in [0, 1] as
+  unsettled, and a non-object response as a failed call. `IDSTACK_JEV_URL` must be https and
+  redirects are not followed. Environment assignments, secret-named values, URL credentials, and
+  auth headers are masked before a command is sent.
+- Playbooks stop at a gate before every state-mutating step: the leak revoke, new-value creation,
+  and consumer rollout in `secret-rotation`, reference removal in `decommission`, the DNS TTL
+  change in `edge-change`, and CI retriggers that hold an apply, deploy, sync, or publish job in
+  `babysit`. A restore, even into a scratch namespace, is state-mutating.
+- `host-config-change` runs check mode for the fleet batch before the fleet gate. It and
+  `drift-audit` look for `check_mode: false` before any `--check` run. The Ansible predicate fails
+  on `command`, `shell`, `raw`, and `script` tasks that would run.
+
+### Fixed
+
+- `install.sh`: more than one of `--check`, `--dry-run`, `--uninstall` is a usage error instead of
+  the last flag winning. `--ref` is fetched and checked out on every run, so a tag pin survives a
+  second run. Bash older than 4.4 and Python older than 3.11 exit 3 with one line.
+- `install.sh --source` is local only when written as a path (`/abs`, `./rel`, `../rel`, `.`); a
+  bare folder name is a usage error.
+- An interrupted pstack copy is detected and redone: skills are staged beside the target and
+  renamed into place, and the manifest gets its commit last. Failed git and harness commands land
+  in `errors` with exit 1 instead of a bare abort.
+- `install.sh --uninstall` no longer stops half way when a guard hook cannot be removed, keeps the
+  CLI link and the shared model file while another harness still uses them, and still removes
+  links when a harness CLI is not on PATH.
+- `idstack guard install --harness codex` no longer adds a second entry when the plugin ships the
+  hook, and removes one left by an earlier run; `idstack doctor` warns about two.
+- `judge --eval` exits 1 when no cases are selected and 3 on a failed call. `doctor --live`
+  reports a failed probe as failed. `build --check` flags generated files whose source is gone.
+  With `--json`, human text goes to stderr, and an unexpected error still prints one JSON object.
+- `scripts/check.py` reports a short mirror pin or a broken `config/pstack-lock.json` as a finding
+  and still runs every other check. It requires a changelog section for the manifest version and
+  compares all four version manifests.
+- The `pstack-watch` workflow can open or update its issue on drift; before, the step stopped
+  first.
+
+### Changed
+
+- CI runs the repo check, unit tests, and build check on Python 3.11 and the newest stable release.
+  Release tags must be on `main`. Markdown lint runs with default rules on.
+- `docs/plan.md`, the playbook catalog, and the check lists in CONTRIBUTING.md and AGENTS.md match
+  what ships.
+
 ## [1.1.2] - 2026-11-06
 
 ### Fixed
@@ -20,7 +103,7 @@ v0.x was the prerelease phase, where breaking changes were expected.
 
 ### Added
 
-- A weekly `pstack-watch` workflow opens an issue when upstream pstack or the mirror pin drifts from `config/pstack-lock.json`.
+- A `pstack-watch` workflow runs every six hours and opens an issue when upstream pstack or the mirror pin drifts from `config/pstack-lock.json`.
 
 ### Fixed
 

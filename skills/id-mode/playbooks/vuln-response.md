@@ -7,9 +7,9 @@ For one CVE or advisory. Where are we exposed, and is it fixed. Finding exposure
 1. Pin the target per `references/targets.md` for each environment searched. Read the advisory text and note the affected and fixed versions.
 2. Find every place the component runs: image SBOMs, chart renders, host package lists, lockfiles. Record each with its current version.
 3. Prioritize: listed in CISA KEV, EPSS score, internet-facing or not, reachable or not, vendor fix available.
-4. Patch through `dependency-bump` or `upgrade`. Open a tracked issue per exposed location group first.
+4. Open a tracked issue per exposed location group, then patch through `dependency-bump` or `upgrade`.
 5. Verify from live state. Rescan the new artifact (`trivy image <ref>`), confirm running pods use the new digest, and confirm host package versions. A merged PR is not proof.
-6. If no fix exists, propose a mitigation (disable the feature, restrict exposure) as a **Gate**. Open an issue with a review date.
+6. If no fix exists, propose a mitigation (disable the feature, restrict exposure) and apply it through the matching change playbook, at its **Gate**. Open an issue with a review date.
 
 Never: mark an item fixed from a green build or a merged PR, or clear a finding because a scanner stopped reporting it without checking why.
 

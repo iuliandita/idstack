@@ -9,9 +9,15 @@ in a temporary copy of fixtures/infra, and check the commands it ran and its fin
 Claude Code runs with user settings excluded and loads only pstack (--pstack-dir) and this
 checkout through --plugin-dir, with the idstack guard in ask mode. Codex uses its installed
 idstack. OpenCode uses its installed skills on a private server with permission prompts
-auto-approved and this checkout's guard in ask mode. Every
-run gets an empty KUBECONFIG, empty AWS config, and no cloud credential variables, so nothing
-reaches a real cluster or account. Exit 1 when any scenario fails.
+auto-approved and this checkout's guard in ask mode.
+
+Isolated for every run: an empty KUBECONFIG, empty AWS, gcloud, and Azure config, no cloud
+credential variables, and no SSH agent. Not isolated: HOME stays real, because the harness logins
+and installed skills live there, so SSH key files and any other tool's login under HOME (Docker,
+Terraform Cloud, Vault token, forge CLIs) stay readable. The guard in ask mode is what stands
+between a run and those; do not run evals on a machine where that is not enough.
+
+Exit 1 when any scenario fails, 2 on a usage error, 3 when the harness CLI or pstack is missing.
 """
 
 from __future__ import annotations
@@ -37,13 +43,17 @@ def prepare(work: Path) -> dict:
     shutil.copytree(ROOT / "fixtures/infra", work, dirs_exist_ok=True)
     shutil.copytree(ROOT / "fixtures/plans", work / "plans")
     (work / ".kubeconfig").write_text("")
-    env = {k: v for k, v in os.environ.items() if not CLOUD_ENV.match(k)}
+    for name in (".gcloud", ".azure"):
+        (work / name).mkdir()
+    env = {k: v for k, v in os.environ.items() if not CLOUD_ENV.match(k) and k != "SSH_AUTH_SOCK"}
     env.update(
         {
             "AWS_EC2_METADATA_DISABLED": "true",
             "KUBECONFIG": str(work / ".kubeconfig"),
             "AWS_CONFIG_FILE": "/dev/null",
             "AWS_SHARED_CREDENTIALS_FILE": "/dev/null",
+            "CLOUDSDK_CONFIG": str(work / ".gcloud"),
+            "AZURE_CONFIG_DIR": str(work / ".azure"),
             "IDSTACK_GUARD_MODE": "ask",
             "IDSTACK_STATE_DIR": str(work / ".idstack-state"),
             "IDSTACK_CONFIG_DIR": str(work / ".idstack-config"),
@@ -54,10 +64,15 @@ def prepare(work: Path) -> dict:
     return env
 
 
+def newest_pstack(cache: Path) -> Path | None:
+    """The cached pstack with the highest version; names that are not dotted numbers are skipped."""
+    versions = [
+        (tuple(map(int, p.name.split("."))), p) for p in cache.glob("*") if re.fullmatch(r"\d+(\.\d+)*", p.name)
+    ]
+    return max(versions)[1] if versions else None
+
+
 def run_claude(task: str, work: Path, env: dict, a) -> tuple[list[str], str, str]:
-    pstack = (
-        Path(a.pstack_dir) if a.pstack_dir else max((HOME / ".claude/plugins/cache/cursor-plugins/pstack").glob("*"))
-    )
     cmd = [
         "claude",
         "-p",
@@ -68,7 +83,7 @@ def run_claude(task: str, work: Path, env: dict, a) -> tuple[list[str], str, str
         "--setting-sources",
         "project",
         "--plugin-dir",
-        str(pstack),
+        a.pstack_dir,
         "--plugin-dir",
         str(ROOT),
         "--permission-mode",
@@ -196,6 +211,16 @@ def main() -> int:
             print(f"error: unknown scenario {', '.join(sorted(unknown))}", file=sys.stderr)
             return 2
         scenarios = [s for s in scenarios if s["id"] in a.scenario]
+    if shutil.which(a.harness) is None:
+        print(f"error: {a.harness} is not on PATH", file=sys.stderr)
+        return 3
+    if a.harness == "claude" and not a.pstack_dir:
+        cache = HOME / ".claude/plugins/cache/cursor-plugins/pstack"
+        pstack = newest_pstack(cache)
+        if pstack is None:
+            print(f"error: no pstack version in {cache}; install pstack or pass --pstack-dir", file=sys.stderr)
+            return 3
+        a.pstack_dir = str(pstack)
     out = Path(a.out) if a.out else None
     if out:
         out.mkdir(parents=True, exist_ok=True)

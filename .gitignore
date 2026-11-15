@@ -14,3 +14,6 @@ decisions.tsv
 .audit/
 __pycache__/
 private-patterns.txt
+
+# tool installs
+node_modules/
