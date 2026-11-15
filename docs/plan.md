@@ -251,7 +251,7 @@ Prose rules are not enough. idstack ships an optional guard hook.
 **Harness support.**
 
 - Claude Code: `hooks/hooks.json` in the plugin, PreToolUse on Bash.
-- Codex: `idstack guard install --harness codex` adds a `PreToolUse` entry on Bash to `$CODEX_HOME/hooks.json`, which needs the user's trust review (`/hooks`) before it runs. Codex cannot ask, so `ask` mode blocks, and `idstack guard allow-once` approves one exact command.
+- Codex: `idstack guard install --harness codex` adds a `PreToolUse` entry on Bash to `$CODEX_HOME/hooks.json`, which needs the user's trust review (`/hooks`) before it runs. Codex cannot ask, so `ask` mode blocks, and `idstack guard allow-once` approves one exact command in one directory (`--cwd`, default: the current one).
 - OpenCode: a plugin package in `harness/opencode/guard` that hooks `execute.before` on shell calls and forwards each one to `idstack guard hook --harness opencode`; `idstack guard install --harness opencode` adds it to the `plugins` list in `opencode.json`.
 
 ## 9. Jev decision layer

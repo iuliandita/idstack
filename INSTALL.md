@@ -141,6 +141,23 @@ heredocs, command substitutions, and commands behind a launcher (`xargs`, `eval`
 
 A comment is read as well, so one that spells out a state-mutating command is held.
 
+**What the rules cover.** [src/guard/patterns.toml](src/guard/patterns.toml) is the list. Besides
+Terraform and OpenTofu (now also `refresh`, `test`, and `init -migrate-state`), Kubernetes, Helm,
+ArgoCD, Flux, Ansible, Velero, Proxmox, and libvirt, it holds:
+
+- `aws`, `gcloud`, and `az`: deletes and stops, IAM grants and policy writes, security-group and
+  firewall opens, deploys, remote commands (`ssm send-command`, `compute ssh`, `vm run-command`),
+  and public-access flags such as `--publicly-accessible`;
+- `pulumi`, `helmfile`, `eksctl`, `gsutil`, `vault` delete and revoke, and `docker compose down -v`;
+- `gh pr merge`, `gh workflow run`, `gh run rerun`, and `glab mr merge`, `glab ci run`, `retry`,
+  and `trigger`;
+- on a remote host only (behind `ssh`): `rm`, `kill`, `dd`, `mkfs`, `service` start and stop,
+  `zfs` and `zpool destroy`, `lvremove`, `docker rm`, package removal, and `systemctl` and reboot
+  as before. `rsync --delete` is held when its target is a remote host;
+- a shell command that writes to the guard's own files: it redirects into `guard.json` or
+  `guard-allow.json`, or names them or the guard's config or state directory in a command other
+  than a plain reader such as `cat`, `jq`, or `grep`.
+
 A heredoc is skipped only when nothing after it can run it (`cat` to a file, `gh ... --body-file -`),
 so a commit message or PR body that mentions a destructive command passes. A quoted string that is
 data, such as a `grep` pattern, passes too.
@@ -148,8 +165,9 @@ data, such as a `grep` pattern, passes too.
 The plugin hooks for Claude Code and Codex and the OpenCode plugin start `hooks/guard_hook.py`,
 which runs the CLI. If the CLI cannot be loaded (Python older than 3.11, a damaged checkout), it
 holds every shell command while the mode is `ask` or `guard.json` cannot be read, and does nothing
-otherwise. An entry that `guard install --harness codex` wrote to `$CODEX_HOME/hooks.json` calls the
-CLI directly and has no such fallback.
+otherwise. The entry `guard install --harness codex` writes to `$CODEX_HOME/hooks.json` starts the
+same file. An entry written by an earlier version calls the CLI directly and has no such fallback:
+run `guard uninstall --harness codex` and install again to replace it.
 
 The guard creates its state directory with mode `0700` and its log with `0600`, because the log keeps
 the first 500 characters of each held command.
@@ -163,6 +181,15 @@ Limits:
 - `ansible-playbook --check` and `ansible --check` count as safe, although a play can set
   `check_mode: false` on a task and change hosts during a check run.
 - Aliases, scripts, variables, and code passed to an interpreter (`python3 -c`, `awk`) are not read.
+- Plain `git push` is not held, to any branch or with `--force`. Protect branches on the forge.
+- The hooks match the shell tool only (`Bash`). A file-edit tool call is not a shell command, so
+  the guard does not see an agent that edits `guard.json` or `guard-allow.json` that way. The rule
+  for the guard's own files reads names as written: a glob or a `cd` into the directory hides them.
+- Cloud rules name the common grant, network, deploy, and remote-command verbs, not every write a
+  provider CLI can make. `pulumi`, `helmfile`, `eksctl`, and `gsutil` verbs were taken from their
+  documentation, the others from the installed CLI's help.
+- With `--jev on`, each ambiguous command the rules did not match is sent to the judge endpoint
+  with secret values masked, together with the working directory.
 
 ## pstack model files
 

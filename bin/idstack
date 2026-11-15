@@ -1023,6 +1023,16 @@ PACKAGERS = re.compile(
 )
 PACKAGER_VERBS = re.compile(r"install|add|remove|uninstall|show|search|info|list|download|upgrade|update|reinstall")
 COMMAND_WORD = re.compile(r"[\w.~/+${}-]+")
+# The guard's settings and approvals, by name or by the default directories that hold them.
+GUARD_FILE = re.compile(
+    r"(?<![\w.-])guard(-allow)?\.json(?![\w.-])|(\.config|\.local/state|XDG_(CONFIG|STATE)_HOME\}?)/idstack(/|$)"
+)
+GUARD_READERS = {
+    *("[", "[[", "basename", "bat", "cat", "cd", "diff", "dirname", "du", "echo", "egrep", "fgrep", "file", "gh"),
+    "idstack",
+    *("git", "glab", "grep", "head", "jq", "less", "ls", "more", "printf", "readlink", "realpath", "rg", "stat"),
+    *("tail", "test", "tree", "wc"),
+}
 
 
 class GuardParseError(ValueError):
@@ -1120,7 +1130,8 @@ def scan_dquote(s: str, i: int, word: list[str], subs: list[str], heredoc: bool 
 def scan_script(s: str, i: int = 0, close: str = "") -> tuple[list[dict], int, list[str], list[str]]:
     """Split shell text into simple commands, reading quotes, comments, redirections, and heredocs.
 
-    Returns the commands (words with quotes removed, heredoc bodies, here-strings, pipe links), the index
+    Returns the commands (words with quotes removed, heredoc bodies, here-strings, the targets of output
+    redirections, pipe links), the index
     where scanning stopped (the `close` character when one is given), the text of every command
     substitution, and the text of every comment. `pipe_in` is also set inside a subshell that a pipe feeds.
     Raises GuardParseError on text a shell could not finish.
@@ -1129,7 +1140,7 @@ def scan_script(s: str, i: int = 0, close: str = "") -> tuple[list[dict], int, l
     subs: list[str] = []
     comments: list[str] = []
     pending: list[tuple[dict, str, bool, bool]] = []
-    cur = {"words": [], "docs": [], "strings": [], "pipe_in": False, "pipe_out": False}
+    cur = {"words": [], "docs": [], "strings": [], "outs": [], "pipe_in": False, "pipe_out": False}
     word: list[str] | None = None
     groups: list[bool] = []  # one entry per open subshell: does a pipe feed it
     quoted, tabs, route, cases, n = False, False, "", 0, len(s)
@@ -1142,6 +1153,8 @@ def scan_script(s: str, i: int = 0, close: str = "") -> tuple[list[dict], int, l
                 pending.append((cur, text, tabs, quoted))
             elif route == "string":
                 cur["strings"].append(text)
+            elif route == "out":
+                cur["outs"].append(text)
             elif not route:
                 cur["words"].append(text)
             route = ""
@@ -1154,10 +1167,10 @@ def scan_script(s: str, i: int = 0, close: str = "") -> tuple[list[dict], int, l
         cases = max(cases + (cur["words"][:1] == ["case"]) - (cur["words"][:1] == ["esac"]), 0)
         piped = op in ("|", "|&")
         fed = piped or bool(groups and groups[-1])
-        if cur["words"] or cur["strings"] or any(p[0] is cur for p in pending):
+        if cur["words"] or cur["strings"] or cur["outs"] or any(p[0] is cur for p in pending):
             cur["pipe_out"] = piped
             segs.append(cur)
-            cur = {"words": [], "docs": [], "strings": [], "pipe_in": fed, "pipe_out": False}
+            cur = {"words": [], "docs": [], "strings": [], "outs": [], "pipe_in": fed, "pipe_out": False}
         elif op != "\n":
             cur["pipe_in"] = fed
 
@@ -1230,7 +1243,7 @@ def scan_script(s: str, i: int = 0, close: str = "") -> tuple[list[dict], int, l
             break
         elif c == "&" and s[i + 1 : i + 2] == ">":
             end_word()
-            route = "drop"
+            route = "out"
             i += 3 if s[i + 2 : i + 3] == ">" else 2
         elif c == "(" and word and word[-1].endswith("=") and not quoted:
             _, end, inner, notes = scan_script(s, i + 1, ")")  # an array literal: name=(a b c)
@@ -1266,10 +1279,12 @@ def scan_script(s: str, i: int = 0, close: str = "") -> tuple[list[dict], int, l
                 tabs = s[i + 2 : i + 3] == "-"
                 route, i = "doc", i + 2 + tabs
             else:
+                out = c == ">"
                 i += 1
                 while s[i : i + 1] in ("<", ">", "&", "|"):
+                    out = out or s[i] == ">"
                     i += 1
-                route = "drop"
+                route = "out" if out else "drop"
         else:
             word = word or []
             word.append(c)
@@ -1506,15 +1521,44 @@ def ansible_module(args: list[str]) -> str:
     return mod
 
 
+def has_flag(args: list[str], flags: list[str]) -> bool:
+    """True when one of `flags` is among the arguments: as written, with a value, as the start of a longer
+    option (--delete-after), or, for a one-letter flag, inside a bundle (-rd)."""
+    for a in args:
+        key = a.split("=")[0]
+        for f in flags:
+            bundled = len(f) == 2 and re.fullmatch(r"-[A-Za-z]+", a) and f[1] in a
+            if key == f or bundled or (f.startswith("--") and key.startswith(f + "-")):
+                return True
+    return False
+
+
+def rule_tools(rules: list[dict], remote: bool) -> set[str]:
+    """The tools whose rules can match here: a rule for remote hosts only counts on one, or when a flag or
+    an argument of the command itself can name the host."""
+    return {
+        t
+        for rule in rules
+        if remote or not rule.get("remote_only") or rule.get("remote_flags") or rule.get("remote_target")
+        for t in rule["tools"]
+    }
+
+
 def match_rules(tool: str, args: list[str], rules: list[dict], remote: bool, bare: bool, text: str) -> list[dict]:
     """Rule hits for one candidate command. `bare` is False where the tool name may be a plain argument of
     another command, so rules that need no verb do not match there."""
     hits = []
     for rule in rules:
-        on_remote = remote or any(a.split("=")[0] in rule.get("remote_flags", []) for a in args)
-        if tool not in rule["tools"] or (rule.get("remote_only") and not on_remote):
+        if tool not in rule["tools"]:
             continue
-        danger = next((a for a in args if a.split("=")[0] in rule.get("danger_flags", [])), None)
+        pos, lead = positionals(args, set(rule.get("value_flags", [])))
+        on_remote = remote or any(a.split("=")[0] in rule.get("remote_flags", []) for a in args)
+        if rule.get("remote_target"):
+            on_remote = on_remote or bool(pos and re.search(rule["remote_target"], pos[-1]))
+        if rule.get("remote_only") and not on_remote:
+            continue
+        flags = rule.get("danger_flags", [])
+        danger = next((a for a in args if a in flags or a.split("=")[0] in flags), None)
         if danger:
             hits.append(guard_hit(tool, danger, rule["reason"], text))
             continue
@@ -1522,15 +1566,18 @@ def match_rules(tool: str, args: list[str], rules: list[dict], remote: bool, bar
             continue
         if rule.get("safe_modules") and ansible_module(args) in rule["safe_modules"]:
             continue
-        pos, lead = positionals(args, set(rule.get("value_flags", [])))
+        while pos and pos[0] in rule.get("skip_words", []):
+            pos = pos[1:]
         if rule.get("requires") and rule["requires"] not in pos:
+            continue
+        if rule.get("with_flags") and not has_flag(args, rule["with_flags"]):
             continue
         matched = None
         if rule.get("any_verb_regex"):
             rx = re.compile(rule["any_verb_regex"])
             matched = next((p for p in pos if rx.search(p)), None)
         else:
-            for verb in rule["verbs"]:
+            for verb in rule.get("verbs", []):
                 words = verb.split()
                 if (words or bare) and any(pos[k : k + len(words)] == words for k in range(lead + 1)):
                     matched = verb or tool
@@ -1540,10 +1587,27 @@ def match_rules(tool: str, args: list[str], rules: list[dict], remote: bool, bar
     return hits
 
 
+def guard_path(word: str) -> bool:
+    """True when a word names the guard's settings, its approvals, or the directories that hold them."""
+    path = os.path.normpath(os.path.expanduser(os.path.expandvars(word)))
+    own = any(path == str(d) or path.startswith(f"{d}/") for d in (CONFIG_DIR, STATE_DIR))
+    return own or GUARD_FILE.search(word) is not None
+
+
+def writes_guard_files(seg: dict) -> bool:
+    """True when a command redirects into the guard's own files, or names them and is not a plain reader."""
+    w = strip_wrappers(seg["words"])
+    reads = not w or os.path.basename(w[0]) in GUARD_READERS
+    return any(guard_path(t) for t in seg["outs"]) or (not reads and any(guard_path(t) for t in w[1:]))
+
+
 def classify_segment(seg: dict, raw: str, rules: list[dict], tools: set[str], remote: bool, depth: int) -> list[dict]:
     """Hits for one simple command: what its own words show, or a hold when it runs commands the guard does
     not read on a command line that names a rule tool."""
     hits = literal_hits(seg, raw, rules, tools, remote, depth)
+    if writes_guard_files(seg):
+        reason = "writes to the guard's own settings or approvals; only the operator does this"
+        hits.append(guard_hit("guard", "files", reason, " ".join(seg["words"] + seg["outs"])))
     if not hits and seg.get("named") and indirect_runner(seg["words"]):
         name, text = os.path.basename(seg["words"][0]), " ".join(seg["words"])
         reason = "runs commands the guard cannot read, on a command line that names an infra tool"
@@ -1565,13 +1629,14 @@ def literal_hits(seg: dict, raw: str, rules: list[dict], tools: set[str], remote
             return literal_hits(dict(seg, words=rest), raw, rules, tools, remote, depth)
     data, seen, text = args_are_data(w), False, " ".join(w)
     fed = seg["pipe_in"] or bool(seg["strings"])
+    launchers = {t for rule in rules if rule.get("launcher") for t in rule["tools"]}
     for i, t in enumerate(w):
         if i and (t.startswith("-") or not COMMAND_WORD.fullmatch(t)):
             continue
         name, args = os.path.basename(t), w[i + 1 :]
         if name in tools:
             hits += match_rules(name, args, rules, remote, i == 0 or not (data or seen), text)
-            seen = True
+            seen = seen or name not in launchers
             if name == "idstack":  # the rest is idstack's own arguments (guard test <command>)
                 break
         elif i and data:
@@ -1604,7 +1669,7 @@ def literal_hits(seg: dict, raw: str, rules: list[dict], tools: set[str], remote
             words = " ".join(rest).split()
             inner = strip_wrappers(words)
             reads = not inner or os.path.basename(inner[0]) in SHELLS or indirect_runner(words)
-            if fed and reads and names_tool(raw, tools):
+            if fed and reads and names_tool(raw, rule_tools(rules, True)):
                 sub.append(guard_hit("ssh", "stdin", "a remote shell reads commands that name an infra tool", text))
             hits += [dict(h, remote=host) for h in sub]
             break
@@ -1627,13 +1692,14 @@ def classify(cmd: str, rules: list[dict], remote: bool = False, depth: int = 0) 
     naming a rule tool) is a hit."""
     if depth > MAX_DEPTH:
         return [guard_hit("?", "nested", "nested too deeply for the guard to read", cmd)]
-    tools = {t for rule in rules for t in rule["tools"]}
+    tools = rule_tools(rules, remote)
     try:
         segs, _, subs, comments = scan_script(cmd)
     except GuardParseError:
         return unparsed(cmd, tools)
     hits: list[dict] = []
-    named = names_tool(fed_text(segs), tools)
+    launchers = {t for rule in rules if rule.get("launcher") for t in rule["tools"]}
+    named = names_tool(fed_text(segs), tools - set(RUNNER_FLAGS))  # rsync -e names itself
     # A comment is classified too: a wrong guess about where one starts must not hide a command.
     for text in subs + comments:
         hits += classify(text, rules, remote, depth + 1)
@@ -1642,7 +1708,7 @@ def classify(cmd: str, rules: list[dict], remote: bool = False, depth: int = 0) 
             end = k + 1
             while end < len(segs) and (segs[end - 1]["pipe_out"] or segs[end]["pipe_in"]):
                 end += 1
-            kind = stdin_consumer(segs[k:end], tools)
+            kind = stdin_consumer(segs[k:end], tools - launchers)
             scripts = [body for body, _ in seg["docs"]] + seg["strings"] if kind else []
             for body, quoted in [] if kind else seg["docs"]:
                 if not quoted:  # the shell expands an unquoted body before anything reads it
@@ -1940,8 +2006,7 @@ def guard_installed(harness: str) -> bool:
 
 
 def guard_install(a) -> int:
-    link = HOME / ".local/bin/idstack"
-    exe = str(link if link.exists() else ROOT / "bin/idstack")
+    shim = shlex.quote(str(ROOT / "hooks/guard_hook.py"))
     plugin = None
     if a.harness == "codex":
         path = guard_config_file("codex")
@@ -1961,7 +2026,9 @@ def guard_install(a) -> int:
                     "hooks": [
                         {
                             "type": "command",
-                            "command": f"{shlex.quote(exe)} guard hook --harness codex",
+                            # The shim answers when the CLI cannot load. The trailing words are the text
+                            # install.sh and guard_in_config search for.
+                            "command": f"python3 {shim} guard hook --harness codex # idstack guard hook",
                             "statusMessage": "idstack guard",
                         }
                     ],
@@ -2229,8 +2296,9 @@ def main() -> int:
 
     a, extra = ap.parse_known_args()
     # Before Python 3.13 argparse ends a `*` positional at the first option, so a command that
-    # follows `allow-once --cwd DIR` arrives here instead of in `command`.
-    if extra and a.cmd == "guard" and not a.command and not extra[0].startswith("-"):
+    # follows `allow-once --cwd DIR` arrives here instead of in `command`. Only one quoted argument
+    # is taken, so no word of the command can be read as an option of this CLI.
+    if len(extra) == 1 and a.cmd == "guard" and not a.command and not extra[0].startswith("-"):
         a.command = extra
     elif extra:
         ap.error("unrecognized arguments: " + " ".join(extra))
