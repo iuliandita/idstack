@@ -12,7 +12,7 @@ disable-model-invocation: true
 
 # id mode
 
-Thin router over pstack's `poteto-mode`. Shared principles, triggers, reply style, and playbook machinery live there; open them from pstack. idstack gates win on conflict with pstack. The repo's own rules win over idstack. When rules disagree, the strictest one wins.
+Thin router over pstack's `poteto-mode`. Shared principles, triggers, reply style, and playbook machinery live there; open them from pstack. idstack gates win on conflict with pstack. A repo rule that is stricter wins over idstack. When rules disagree, the strictest one wins.
 
 **Requires** pstack. Check first with [references/requirements.md](references/requirements.md), which also says how to reach pstack's hidden skills. Missing: stop and tell the user how to install it. In the same check, run `idstack --help` once. When it runs, plan summaries, grant predicates, and Jev decision points go through the `idstack` CLI; the `jq` and manual forms are only for when it does not.
 
@@ -58,12 +58,12 @@ Thin router over pstack's `poteto-mode`. Shared principles, triggers, reply styl
 - **gitops-change.** Kubernetes manifests, Helm values or charts, and Kustomize overlays delivered by ArgoCD or Flux.
 - **host-config-change.** Ansible roles and playbooks against hosts and VMs.
 - **edge-change.** DNS records, reverse proxy routes, firewall rules, VPN peers, TLS certificates, and IP allowlists, including the same change across several repos.
-- **dependency-bump.** A backlog of Renovate or Dependabot PRs, or one chart, provider, module, image, or action bump.
+- **dependency-bump.** A backlog of Renovate or Dependabot PRs, or one chart, provider, module, image, or action bump. A bump that needs a migration, an intermediate version, or a backup is an `upgrade`.
 - **upgrade.** A version upgrade of a cluster, platform component, managed service, hypervisor, or self-hosted app.
 - **queue-burndown.** A queue of PRs or MRs to land in order, where some merges need a plan and apply.
 - **env-promotion.** Carrying a change across environments (dev, QA, prod) where parity matters.
 - **decommission.** Removing or parking a VM, host, app, cluster resource, bucket, DNS name, or account believed to be unused.
-- **secret-rotation.** Rotating a credential, key, token, or certificate, and responding to a leaked secret.
+- **secret-rotation.** Rotating a credential, key, token, or certificate, and responding to a leaked secret. A new or changed certificate on a route is an `edge-change`.
 
 **Diagnose.** Read-only until a gate.
 
@@ -85,7 +85,7 @@ Thin router over pstack's `poteto-mode`. Shared principles, triggers, reply styl
 - **agent-hosting.** Running autonomous agents or bots on your own infrastructure.
 - **closeout.** The end of a work session.
 
-**Overlays on pstack playbooks:** `bug-fix`, `babysit`, `shipping`, `opening-a-pr`, `autonomous-run`, `pause-safely`. Opening a PR runs at the end of every change playbook, through its overlay.
+**Overlays on pstack playbooks:** `bug-fix`, `babysit`, `shipping`, `opening-a-pr`, `autonomous-run`, `pause-safely`. Opening a PR runs in every change playbook at the step that names it, through its overlay.
 
 **pstack playbooks used unchanged:** `investigation`, `session-pickup`, `multi-phase-plan`, `orchestrate`, `worktree-cleanup`, `eval`, `authoring-a-skill`, and the `figure-it-out` skill.
 
@@ -93,7 +93,7 @@ Thin router over pstack's `poteto-mode`. Shared principles, triggers, reply styl
 
 ## Principles
 
-idstack's four leaves:
+idstack's four leaves, each at `../principle-<name>/SKILL.md` from this file:
 
 - **Plan Before Apply** (**principle-plan-before-apply**). Any state-mutating command. Its only input is a reviewed artifact from a read-only step.
 - **Pin the Target** (**principle-pin-the-target**). Any command against a live system. Name it, pass it explicitly, check it matches the task.

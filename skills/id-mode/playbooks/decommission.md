@@ -11,7 +11,7 @@ For removing or parking a VM, host, app, cluster resource, bucket, DNS name, or 
 4. **Gate:** the reversible step first (scale to zero through git, power off, rename with an `OFF-` prefix, disable the DNS name). Run **Opening a PR** when the step goes through git.
 5. Agree a soak period with the operator. Watch for breakage and for new traffic.
 6. **Gate:** teardown, with a final backup if any data is kept. Restore it to scratch first, per `restore-drill`.
-7. Remove every reference: monitoring targets, alerts, backup jobs, DNS, firewall rules, secrets, docs, inventory. Check the result with `change-verifier`.
+7. **Gate:** per location, remove every reference: monitoring targets, alerts, docs, and inventory first, DNS and firewall rules through `edge-change`, backup jobs and secrets last. Check the result with `change-verifier`.
 
 Never: tear down without a soak period, skip the reversible step, or run teardown under a grant.
 

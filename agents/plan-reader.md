@@ -15,6 +15,6 @@ Input from your parent: the artifact path, the intended scope (addresses, apps, 
 3. List every delete and every replace by full address or name. For Terraform, a replace is any `resource_changes` entry whose actions contain both `delete` and `create`.
 4. List every change to a resource that holds data (databases, volumes, buckets, PVCs, snapshots, DNS zones), to IAM or RBAC, and to network exposure (security groups, firewall rules, CIDRs, ports, NetworkPolicy, ingress).
 5. List every changed address, name, or host outside the intended scope.
-6. For Kubernetes renders, also list CRD changes and objects that `Prune=true` would delete. For Ansible, list `command` and `shell` tasks, whose effect check mode cannot predict.
+6. For Kubernetes renders, also list CRD changes and objects that `Prune=true` would delete. For Ansible, list `command`, `shell`, `raw`, and `script` tasks, whose effect check mode cannot predict.
 
 For a Terraform or OpenTofu `plan.json`, start from `idstack plan-summary <plan.json> --scope '<glob>' --json` when the `idstack` CLI is on PATH, and check its lists against the plan. Use only read-only commands (`idstack plan-summary`, `jq`, `grep`, `terraform show -json` on a saved plan). Reply with the counts, then each list. An empty list says "none". End with one line: `unexpected: yes` or `unexpected: no`.
