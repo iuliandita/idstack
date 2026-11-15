@@ -36,16 +36,30 @@ jobs:
 
       - name: Ruff
         env:
+          # renovate: datasource=pypi depName=ruff
           RUFF_VERSION: "0.17.3"
         run: |
           pipx run "ruff==${RUFF_VERSION}" check bin/idstack scripts tests
           pipx run "ruff==${RUFF_VERSION}" format --check bin/idstack scripts tests
+
+      - name: Install shellcheck
+        env:
+          # renovate: datasource=github-releases depName=koalaman/shellcheck extractVersion=^v(?<version>.+)$
+          SHELLCHECK_VERSION: "0.11.0"
+          SHELLCHECK_SHA256: "8c3be12b05d5c177a04c29e3c78ce89ac86f1595681cab149b65b97c4e227198"
+        run: |
+          mkdir -p "$HOME/.local/bin"
+          curl -fsSLo /tmp/shellcheck.tar.xz "https://github.com/koalaman/shellcheck/releases/download/v${SHELLCHECK_VERSION}/shellcheck-v${SHELLCHECK_VERSION}.linux.x86_64.tar.xz"
+          echo "${SHELLCHECK_SHA256}  /tmp/shellcheck.tar.xz" | sha256sum --check
+          tar -xJf /tmp/shellcheck.tar.xz -C "$HOME/.local/bin" --strip-components=1 "shellcheck-v${SHELLCHECK_VERSION}/shellcheck"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
       - name: Shellcheck
         run: shellcheck install.sh
 
       - name: Install actionlint
         env:
+          # renovate: datasource=github-releases depName=rhysd/actionlint extractVersion=^v(?<version>.+)$
           ACTIONLINT_VERSION: "1.7.12"
           ACTIONLINT_SHA256: "8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8"
         run: |
@@ -57,6 +71,45 @@ jobs:
 
       - name: Lint workflows
         run: actionlint -color
+
+  python:
+    name: python (${{ matrix.python }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        # The supported floor and the newest stable release.
+        python: ["3.11", "3.x"]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: python3 is the matrix version
+        env:
+          WANT: ${{ matrix.python }}
+        run: |
+          python3 - <<'PY'
+          import os, sys
+          got = "%d.%d" % sys.version_info[:2]
+          want = os.environ["WANT"]
+          print(f"python3 is {sys.version}")
+          sys.exit(0 if want in (got, "3.x") else f"python3 is {got}, the matrix says {want}")
+          PY
+
+      - name: Repo checks
+        run: python3 scripts/check.py
+
+      - name: Unit tests
+        run: python3 -m unittest discover -s tests -v
+
+      - name: Generated files are current
+        run: python3 bin/idstack build --check
 
   install:
     name: install
@@ -138,7 +191,25 @@ jobs:
           test -L "$CODEX_HOME/agents/plan-reader.toml"
 
       - name: Reinstall is a no-op
-        run: ./install.sh --harness claude,codex,opencode --source "$GITHUB_WORKSPACE"
+        run: |
+          # One line per file or link, without the state the harness CLIs rewrite on every call.
+          snapshot() {
+            (
+              cd "$RUNNER_TEMP/idstack-home"
+              find . \( -path ./claude/plugins/known_marketplaces.json -o -path ./claude/.claude.json \
+                -o -path ./claude/backups -o -path ./codex/.tmp \) -prune \
+                -o -type l -printf '%p -> %l\n' -o -type f -exec sha256sum {} + | LC_ALL=C sort
+            )
+          }
+          snapshot > "$RUNNER_TEMP/before.txt"
+          ./install.sh --harness claude,codex,opencode --source "$GITHUB_WORKSPACE"
+          snapshot > "$RUNNER_TEMP/after.txt"
+          test -s "$RUNNER_TEMP/before.txt"
+          if ! diff "$RUNNER_TEMP/before.txt" "$RUNNER_TEMP/after.txt"; then
+            echo "::error::reinstall changed the install tree"
+            exit 1
+          fi
+          echo "install tree unchanged: $(sha256sum < "$RUNNER_TEMP/after.txt" | cut -d' ' -f1)"
 
       - name: Uninstall
         run: |
@@ -147,6 +218,14 @@ jobs:
           test ! -e "$OPENCODE_SKILLS_DIR/.idstack-install.json"
           test ! -e "$IDSTACK_BIN_DIR/idstack"
           test ! -e "$CODEX_HOME/agents/plan-reader.toml"
+          set +e
+          ./install.sh --harness claude,codex,opencode --source "$GITHUB_WORKSPACE" --check
+          rc=$?
+          set -e
+          if [ "$rc" -ne 1 ]; then
+            echo "::error::expected exit 1 after uninstall, got $rc"
+            exit 1
+          fi
 
   markdown:
     name: markdown
@@ -178,6 +257,7 @@ jobs:
 
       - name: Install lychee
         env:
+          # renovate: datasource=github-releases depName=lycheeverse/lychee extractVersion=^lychee-v(?<version>.+)$
           LYCHEE_VERSION: "0.24.2"
           LYCHEE_SHA256: "1f4e0ef7f6554a6ed33dd7ac144fb2e1bbed98598e7af973042fc5cd43951c9a"
         run: |
@@ -192,7 +272,7 @@ jobs:
           mapfile -t markdown_files < <(
             {
               printf '%s\n' AGENTS.md CHANGELOG.md CONTRIBUTING.md INSTALL.md README.md SECURITY.md
-              find agents docs skills src -type f -name '*.md'
+              find .github agents docs skills src -type f -name '*.md' -not -path '*/node_modules/*'
             } | sort -u
           )
           lychee --config lychee.toml "${markdown_files[@]}"

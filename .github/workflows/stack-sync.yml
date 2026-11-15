@@ -40,8 +40,13 @@ jobs:
           upstream_check=$(sha256sum "$RUNNER_TEMP/stack-check.py" | cut -d' ' -f1)
           vendored_canon=$(sed -n 's/^canon\.json: sha256://p' .github/stack/SOURCE)
           vendored_check=$(sed -n 's/^stack-check\.py: sha256://p' .github/stack/SOURCE)
+          number=$(gh issue list --state open --search "\"$TITLE\" in:title" --json number,title \
+            --jq "[.[] | select(.title == \"$TITLE\")][0].number // empty")
           if [ "$upstream_canon" = "$vendored_canon" ] && [ "$upstream_check" = "$vendored_check" ]; then
             echo "Vendored stack canon matches agents develop."
+            if [ -n "$number" ]; then
+              gh issue close "$number" --comment "The vendored stack canon matches agents develop again."
+            fi
             exit 0
           fi
           {
@@ -59,8 +64,6 @@ jobs:
             echo "3. Run \`python3 .github/stack/stack-check.py\` and fix any new findings."
             echo "4. Open a PR into \`develop\` and close this issue."
           } > "$RUNNER_TEMP/body.md"
-          number=$(gh issue list --state open --search "\"$TITLE\" in:title" --json number,title \
-            --jq "[.[] | select(.title == \"$TITLE\")][0].number // empty")
           if [ -n "$number" ]; then
             gh issue edit "$number" --body-file "$RUNNER_TEMP/body.md"
             echo "Updated issue #$number."

@@ -1,6 +1,6 @@
 {
   "config": {
-    "default": false,
+    "default": true,
     "code-block-style": {
       "style": "fenced"
     },
@@ -9,9 +9,21 @@
     },
     "no-duplicate-heading": {
       "siblings_only": true
-    }
+    },
+    "no-inline-html": {
+      "allowed_elements": ["h1", "img"]
+    },
+    // Off because existing documents fail them.
+    "line-length": false,
+    "no-bare-urls": false,
+    "first-line-heading": false,
+    "blanks-around-lists": false,
+    "fenced-code-language": false,
+    "blanks-around-fences": false
   },
+  "gitignore": true,
   "globs": [
+    ".github/**/*.md",
     "AGENTS.md",
     "CHANGELOG.md",
     "CONTRIBUTING.md",
@@ -22,5 +34,8 @@
     "docs/**/*.md",
     "skills/**/*.md",
     "src/**/*.md"
+  ],
+  "ignores": [
+    "**/node_modules/**"
   ]
 }
