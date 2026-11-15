@@ -931,6 +931,8 @@ WRAPPERS = {
     "ionice",
     "watch",
     "unbuffer",
+    "xargs",
+    "parallel",
 }
 WRAPPER_VALUE_FLAGS = {
     "sudo": {
@@ -962,53 +964,342 @@ WRAPPER_VALUE_FLAGS = {
     "ionice": {"-c", "-n", "-p", "-P", "-u", "--class", "--classdata", "--pid", "--pgid", "--uid"},
     "watch": {"-n", "-d", "--interval", "--differences"},
     "stdbuf": {"-i", "-o", "-e", "--input", "--output", "--error"},
+    "xargs": {"-n", "-I", "-P", "-L", "-d", "-E", "-s", "-a", "--max-args", "--max-procs", "--delimiter", "--arg-file"},
+    "parallel": {"-j", "-I", "-N", "-n", "-d", "-a", "--jobs", "--max-args", "--delimiter", "--arg-file", "--colsep"},
 }
-SHELL_KEYWORDS = {"if", "then", "else", "elif", "fi", "do", "done", "while", "until", "{", "}", "!", "case", "esac"}
-INTERPRETERS = re.compile(r"(python[0-9.]*|uv|uvx|pipx|pdm|poetry)")
+SHELL_KEYWORDS = {"if", "then", "else", "elif", "fi", "do", "done", "while", "until", "{", "}", "!", "esac"}
 SSH_VALUE_FLAGS = set("BbcDEeFIiJLlmOoPpQRSWw")
-SHELLS = {"bash", "sh", "zsh", "dash", "ksh", "script"}
+SHELLS = {"bash", "sh", "zsh", "dash", "ksh", "fish", "ash", "script"}
+STDIN_PATHS = {"-", "/dev/stdin", "/dev/fd/0", "/proc/self/fd/0"}
+STDIN_ARGS = ("xargs", "parallel")  # launchers that build their command's arguments from standard input
 INFRA_HINT = re.compile(
     r"(terraform|tofu|kubectl|helm|argocd|flux|ansible|velero|aws|gcloud|az|doctl|qm|pct|pvesh|virsh|ssh)"
 )
+MAX_DEPTH = 4
+# Commands that run neither their arguments nor their stdin, so a tool name after one is data.
+# Some can still run a command through an option or their own script: see indirect_runner.
+NON_EXEC = re.compile(
+    r"\[\[?|:|awk|base64|basename|bat|case|cat|cd|chmod|chown|column|cp|curl|cut|declare|df|diff|dir|dirname|du|echo"
+    r"|egrep|export|false|fd|fgrep|file|find|for|gh|glab|grep|head|help|info|jq|last|lastb|less|ln|local|locate|ls|man"
+    r"|mkdir|more|mv|pacman|paru|printf|pushd|read|readlink|readonly|realpath|return|rg|rm|rmdir|rsync|scp|sed"
+    r"|select|sort|stat|tail|tar|tee|test|touch|tr|tree|true|type|uniq|unset|wc|wget|whereis|which|yay|yq"
+)
+GIT_EXEC = {"bisect", "foreach", "filter-branch", "--exec", "-x"}
+FIND_EXEC = {"-exec", "-execdir", "-ok", "-okdir"}
+FINDERS = ("find", "fd", "fdfind")
+# Options that make a data utility run a command.
+RUNNER_FLAGS = {
+    "bat": ["--pager"],
+    "man": ["-P", "-H", "--pager", "--html"],
+    "rg": ["--pre", "--hostname-bin"],
+    "rsync": ["-e", "--rsh"],
+    "scp": ["-S"],
+    "sort": ["--compress-program"],
+    "tar": [
+        "-I",
+        "-F",
+        "--to-command",
+        "--checkpoint-action",
+        "--use-compress-program",
+        "--rsh-command",
+        "--rmt-command",
+        "--info-script",
+        "--new-volume-script",
+    ],
+    "wget": ["--use-askpass"],
+}
+SCRIPTED = {"sed": "sed", "gsed": "sed", "awk": "awk", "gawk": "awk", "mawk": "awk", "nawk": "awk"}
+SED_ADDRESS = r"(?:\d+|\$|/[^/\n]*/)"
+# One sed command that cannot run anything: print, delete, quit, or a substitution without the e and w flags.
+SED_PLAIN = re.compile(
+    rf"(?:{SED_ADDRESS}(?:,{SED_ADDRESS})?)?!?"
+    r"(?:[pdq]|s([^\w\s\\])(?:\\.|(?!\1)[^\\\n])*\1(?:\\.|(?!\1)[^\\\n])*\1[gpiImM0-9]*)"
+)
+SED_OPTION = re.compile(
+    r"-[nEirsuz]+|-i\S*|--(quiet|silent|in-place(=.*)?|regexp-extended|null-data|separate|unbuffered|posix|debug|sandbox)"
+)
+PACKAGERS = re.compile(
+    r"apk|apt|apt-get|brew|cargo|conda|dnf|gem|go|mamba|nix|npm|pip|pip3|pipx|pnpm|poetry|snap|uv|yarn|yum|zypper"
+)
+PACKAGER_VERBS = re.compile(r"install|add|remove|uninstall|show|search|info|list|download|upgrade|update|reinstall")
+COMMAND_WORD = re.compile(r"[\w.~/+${}-]+")
+
+
+class GuardParseError(ValueError):
+    pass
 
 
 def load_rules() -> list[dict]:
     return tomllib.loads((ROOT / "src/guard/patterns.toml").read_text())["rule"]
 
 
-def split_segments(cmd: str) -> list[list[str]]:
-    cmd = re.sub(r"\\\r?\n", " ", cmd)
-    lex = shlex.shlex(cmd, posix=True, punctuation_chars=";&|()\n")
-    lex.whitespace = " \t\r"
-    lex.whitespace_split = True
-    lex.commenters = ""
-    try:
-        tokens = list(lex)
-    except ValueError:
-        tokens = re.split(r"[ \t]+|(?=[;&|\n])|(?<=[;&|\n])", cmd)
-    segs, cur = [], []
-    for t in tokens:
-        if not t:
-            continue
-        if set(t) <= set(";&|()\n"):
-            if cur:
-                segs.append(cur)
-            cur = []
+def scan_backtick(s: str, i: int, word: list[str], subs: list[str]) -> int:
+    j, inner = i + 1, []
+    while j < len(s) and s[j] != "`":
+        if s[j] == "\\" and s[j + 1 : j + 2] in ("`", "\\", "$"):
+            j += 1
+        inner.append(s[j])
+        j += 1
+    if j >= len(s):
+        raise GuardParseError("unterminated backtick")
+    subs.append("".join(inner))
+    word.append(s[i : j + 1])
+    return j + 1
+
+
+def scan_dollar(s: str, i: int, word: list[str], subs: list[str], quoted: bool) -> int:
+    nxt = s[i + 1 : i + 2]
+    if nxt == "(":
+        end = scan_script(s, i + 2, ")")[1]
+        subs.append(s[i + 2 : end])
+        word.append(s[i : end + 1])
+        return end + 1
+    if nxt == "{":
+        j, depth = i + 2, 1
+        while depth:
+            c = s[j : j + 1]
+            if not c:
+                raise GuardParseError("unterminated expansion")
+            if c == "\\":
+                j += 2
+            elif c == "$" and s[j + 1 : j + 2] == "(":
+                j = scan_dollar(s, j, [], subs, quoted)
+            elif c == "`":
+                j = scan_backtick(s, j, [], subs)
+            elif c == '"':
+                j = scan_dquote(s, j + 1, [], subs)
+            elif c == "'" and not quoted:
+                j = s.find("'", j + 1) + 1
+                if not j:
+                    raise GuardParseError("unterminated quote")
+            else:
+                depth += (c == "{") - (c == "}")
+                j += 1
+        word.append(s[i:j])
+        return j
+    if nxt == "'" and not quoted:
+        j, out = i + 2, []
+        while s[j : j + 1] not in ("'", ""):
+            if s[j] == "\\" and j + 1 < len(s):
+                j += 1
+                out.append({"n": "\n", "t": "\t"}.get(s[j], s[j]))
+            else:
+                out.append(s[j])
+            j += 1
+        if j >= len(s):
+            raise GuardParseError("unterminated quote")
+        word.append("".join(out))
+        return j + 1
+    if nxt == '"' and not quoted:
+        return scan_dquote(s, i + 2, word, subs)
+    word.append("$")
+    return i + 1
+
+
+def scan_dquote(s: str, i: int, word: list[str], subs: list[str], heredoc: bool = False) -> int:
+    """Read double-quoted text from i, or with heredoc a whole unquoted heredoc body, which expands the same way."""
+    while i < len(s):
+        c = s[i]
+        if c == '"' and not heredoc:
+            return i + 1
+        if c == "\\" and s[i + 1 : i + 2] in ("$", "`", '"', "\\", "\n"):
+            word.append(s[i + 1].strip("\n"))
+            i += 2
+        elif c == "$":
+            i = scan_dollar(s, i, word, subs, True)
+        elif c == "`":
+            i = scan_backtick(s, i, word, subs)
         else:
-            cur.append(t)
-    if cur:
-        segs.append(cur)
-    return segs
+            word.append(c)
+            i += 1
+    if not heredoc:
+        raise GuardParseError("unterminated quote")
+    return i
+
+
+def scan_script(s: str, i: int = 0, close: str = "") -> tuple[list[dict], int, list[str], list[str]]:
+    """Split shell text into simple commands, reading quotes, comments, redirections, and heredocs.
+
+    Returns the commands (words with quotes removed, heredoc bodies, here-strings, pipe links), the index
+    where scanning stopped (the `close` character when one is given), the text of every command
+    substitution, and the text of every comment. `pipe_in` is also set inside a subshell that a pipe feeds.
+    Raises GuardParseError on text a shell could not finish.
+    """
+    segs: list[dict] = []
+    subs: list[str] = []
+    comments: list[str] = []
+    pending: list[tuple[dict, str, bool, bool]] = []
+    cur = {"words": [], "docs": [], "strings": [], "pipe_in": False, "pipe_out": False}
+    word: list[str] | None = None
+    groups: list[bool] = []  # one entry per open subshell: does a pipe feed it
+    quoted, tabs, route, cases, n = False, False, "", 0, len(s)
+
+    def end_word() -> None:
+        nonlocal word, quoted, route
+        if word is not None:
+            text = "".join(word)
+            if route == "doc":
+                pending.append((cur, text, tabs, quoted))
+            elif route == "string":
+                cur["strings"].append(text)
+            elif not route:
+                cur["words"].append(text)
+            route = ""
+        word, quoted = None, False
+
+    def end_seg(op: str) -> None:
+        nonlocal cur, route, cases
+        end_word()
+        route = ""
+        cases = max(cases + (cur["words"][:1] == ["case"]) - (cur["words"][:1] == ["esac"]), 0)
+        piped = op in ("|", "|&")
+        fed = piped or bool(groups and groups[-1])
+        if cur["words"] or cur["strings"] or any(p[0] is cur for p in pending):
+            cur["pipe_out"] = piped
+            segs.append(cur)
+            cur = {"words": [], "docs": [], "strings": [], "pipe_in": fed, "pipe_out": False}
+        elif op != "\n":
+            cur["pipe_in"] = fed
+
+    def in_case() -> bool:
+        """True where an unmatched `)` ends a case pattern, not the text being scanned."""
+        ending = cur["words"][:1] == ["esac"] or (not cur["words"] and word is not None and "".join(word) == "esac")
+        return (cases > 0 or cur["words"][:1] == ["case"]) and not ending
+
+    def read_docs(i: int) -> int:
+        for seg, delim, strip, raw in pending:
+            body = []
+            while i < n:
+                j = s.find("\n", i)
+                j = n if j < 0 else j
+                line = s[i:j].rstrip("\r")
+                test = line.lstrip("\t") if strip else line
+                if test == delim:
+                    i = min(j + 1, n)
+                    break
+                if close and test.startswith(delim) and test[len(delim) :].lstrip().startswith(close):
+                    i += len(line) - len(test) + len(delim)
+                    break
+                body.append(line)
+                i = min(j + 1, n)
+            seg["docs"].append(("\n".join(body), raw))
+        pending.clear()
+        return i
+
+    while i < n:
+        c = s[i]
+        if c == "\\":
+            if s[i + 1 : i + 2] == "\n" or s[i + 1 : i + 3] == "\r\n":
+                i += 2 + (s[i + 1] == "\r")
+                continue
+            word = word or []
+            word.append(s[i + 1 : i + 2] or "\\")
+            quoted = True
+            i += 2
+        elif c == "'":
+            j = s.find("'", i + 1)
+            if j < 0:
+                raise GuardParseError("unterminated quote")
+            word = word or []
+            word.append(s[i + 1 : j])
+            quoted = True
+            i = j + 1
+        elif c == '"':
+            word = word or []
+            quoted = True
+            i = scan_dquote(s, i + 1, word, subs)
+        elif c == "$":
+            word = word or []
+            quoted = quoted or s[i + 1 : i + 2] in ("'", '"')
+            i = scan_dollar(s, i, word, subs, False)
+        elif c == "`":
+            word = word or []
+            i = scan_backtick(s, i, word, subs)
+        elif c in " \t\r":
+            end_word()
+            i += 1
+        elif c == "#" and word is None:
+            j = s.find("\n", i)
+            j = n if j < 0 else j
+            comments.append(s[i + 1 : j])
+            i = j
+        elif c == "\n":
+            end_seg("\n")
+            i = read_docs(i + 1)
+        elif c == ")" and close and not groups and not in_case():
+            break
+        elif c == "&" and s[i + 1 : i + 2] == ">":
+            end_word()
+            route = "drop"
+            i += 3 if s[i + 2 : i + 3] == ">" else 2
+        elif c == "(" and word and word[-1].endswith("=") and not quoted:
+            _, end, inner, notes = scan_script(s, i + 1, ")")  # an array literal: name=(a b c)
+            subs += inner
+            comments += notes
+            word.append(s[i : end + 1])
+            i = end + 1
+        elif c in ";&|()":
+            op = s[i : i + 2] if s[i : i + 2] in ("&&", "||", ";;", "|&") else c
+            end_word()
+            if c == "(":
+                groups.append((cur["pipe_in"] and not cur["words"]) or bool(groups and groups[-1]))
+            elif c == ")" and groups:
+                groups.pop()
+            elif c == ")":
+                cases += cur["words"][:1] == ["case"]
+                cur["words"] = []  # a case pattern, not a command
+            end_seg(op)
+            i += len(op)
+        elif c in "<>" and s[i + 1 : i + 2] == "(":
+            end = scan_script(s, i + 2, ")")[1]
+            subs.append(s[i + 2 : end])
+            word = word or []
+            word.append(s[i : end + 1])
+            i = end + 1
+        elif c in "<>":
+            if word is not None and not quoted and "".join(word).isdigit():
+                word = None  # the descriptor number of 2>file
+            end_word()
+            if s.startswith("<<<", i):
+                route, i = "string", i + 3
+            elif s.startswith("<<", i):
+                tabs = s[i + 2 : i + 3] == "-"
+                route, i = "doc", i + 2 + tabs
+            else:
+                i += 1
+                while s[i : i + 1] in ("<", ">", "&", "|"):
+                    i += 1
+                route = "drop"
+        else:
+            word = word or []
+            word.append(c)
+            i += 1
+    else:
+        if close:
+            raise GuardParseError("unterminated substitution")
+    end_seg("")
+    read_docs(n)
+    return segs, i, subs, comments
+
+
+def split_segments(cmd: str) -> list[list[str]]:
+    try:
+        return [seg["words"] for seg in scan_script(cmd)[0]]
+    except GuardParseError:
+        return [cmd.split()]
 
 
 def strip_wrappers(seg: list[str]) -> list[str]:
     i = 0
     while i < len(seg):
         t = seg[i]
-        if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*=.*", t) or t in SHELL_KEYWORDS:
+        name = os.path.basename(t)
+        if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*\+?=.*", t, re.S) or t in SHELL_KEYWORDS:
             i += 1
-        elif os.path.basename(t) in WRAPPERS:
-            values = WRAPPER_VALUE_FLAGS.get(os.path.basename(t), set())
+        elif name in WRAPPERS:
+            if name == "command" and seg[i + 1 : i + 2] in (["-v"], ["-V"]):
+                return []  # only looks the name up
+            values = WRAPPER_VALUE_FLAGS.get(name, set())
             i += 1
             while i < len(seg) and (seg[i].startswith("-") or re.fullmatch(r"[0-9.]+[smhd]?", seg[i])):
                 i += 2 if seg[i] in values else 1
@@ -1017,79 +1308,351 @@ def strip_wrappers(seg: list[str]) -> list[str]:
     return seg[i:]
 
 
-def positionals(args: list[str], value_flags: set[str]) -> list[str]:
-    pos, skip = [], False
+def positionals(args: list[str], value_flags: set[str]) -> tuple[list[str], int]:
+    """Positional arguments, and how many leading ones may be the value of a flag the rule does not list."""
+    pos: list[str] = []
+    lead, skip, after_flag = 0, False, False
     for t in args:
         if skip:
             skip = False
+        elif t.startswith("-"):
+            skip = "=" not in t and t in value_flags
+            after_flag = "=" not in t and not skip
+        else:
+            lead += after_flag and lead == len(pos)
+            after_flag = False
+            pos.append(t)
+    return pos, lead
+
+
+def guard_hit(tool: str, verb: str, reason: str, text: str) -> dict:
+    return {"tool": tool, "verb": verb, "reason": reason, "segment": text[:300]}
+
+
+def names_tool(text: str, tools: set[str]) -> bool:
+    names = "|".join(re.escape(t) for t in sorted(tools, key=len, reverse=True))
+    return re.search(rf"(?<![\w.-])(?:{names})(?![\w-])", text) is not None
+
+
+def unparsed(text: str, tools: set[str]) -> list[dict]:
+    if not names_tool(text, tools):
+        return []
+    return [guard_hit("?", "unparsed", "could not be parsed and names an infra tool", text)]
+
+
+def args_are_data(w: list[str]) -> bool:
+    """True for a command that runs neither its arguments nor its stdin (ls, grep, pip install)."""
+    name, args = os.path.basename(w[0]), w[1:]
+    if name == "git":
+        return not GIT_EXEC & set(args)
+    if PACKAGERS.fullmatch(name):
+        return any(PACKAGER_VERBS.fullmatch(a) for a in [a for a in args if not a.startswith("-")][:2])
+    return NON_EXEC.fullmatch(name) is not None
+
+
+def plain_script(kind: str, args: list[str]) -> bool:
+    """True for a sed or awk command line whose script, read as written, has no way to run a command."""
+    if kind == "sed":
+        scripts: list[str] = []
+        rest: list[str] = []
+        j = 0
+        while j < len(args):
+            a = args[j]
+            if a == "--expression" or re.fullmatch(r"-[nEirsuz]*e", a):
+                scripts.append(args[j + 1] if j + 1 < len(args) else "?")
+                j += 1
+            elif a.startswith("--expression="):
+                scripts.append(a.partition("=")[2])
+            elif len(a) > 1 and a.startswith("-"):
+                if not SED_OPTION.fullmatch(a):
+                    return False
+            else:
+                rest.append(a)
+            j += 1
+        scripts = scripts or rest[:1]
+        return bool(scripts) and all(SED_PLAIN.fullmatch(c.strip()) for text in scripts for c in text.split(";"))
+    program: list[str] = []
+    skip = False
+    for a in args:
+        if skip or a.startswith(("-F", "-v")):
+            skip = not skip and a in ("-F", "-v")
+        elif len(a) > 1 and a.startswith("-"):
+            return False
+        else:
+            program.append(a)
+    return not re.search(r"system|getline|[|@]", " ".join(program))
+
+
+def runs_by_option(name: str, args: list[str]) -> bool:
+    """True when an option makes tar, rsync, and the like run a command."""
+    flags = RUNNER_FLAGS.get(name, [])
+    if name == "tar" and args and not args[0].startswith("-"):
+        args = ["-" + args[0], *args[1:]]  # the old option style: tar xf
+    for a in args:
+        key = a.partition("=")[0]
+        if a.startswith("--"):  # GNU long options can be shortened
+            if len(key) > 3 and any(f.startswith(key) for f in flags if f.startswith("--")):
+                return True
+        elif a.startswith("-") and any(f[1] in a for f in flags if not f.startswith("--")):
+            return True
+    return any("Command" in a for a in args) if name == "scp" else name == "wget" and any("askpass" in a for a in args)
+
+
+def exec_rest(w: list[str]) -> list[str] | None:
+    """The command find or fd runs for each match, None when it runs none."""
+    for j, t in enumerate(w[1:], 1):
+        if os.path.basename(w[0]) == "find":
+            if t in FIND_EXEC:
+                return w[j + 1 :]
+        elif re.fullmatch(r"--exec(-batch)?(=.*)?|-[A-Za-z0-9]*[xX].*", t, re.S):
+            value = t.partition("=")[2] if t.startswith("--") else ""
+            return [*([value] if value else []), *w[j + 1 :]]
+    return None
+
+
+def inert_command(w: list[str]) -> bool:
+    """True for a command that stays inert whatever arguments are added to it (grep, wc, rm)."""
+    name = os.path.basename(w[0]) if w else ""
+    return bool(w) and args_are_data(w) and name not in (*SCRIPTED, *RUNNER_FLAGS, *FINDERS)
+
+
+def indirect_runner(words: list[str]) -> bool:
+    """True when what the command runs is not in its own words: it comes from standard input, an option
+    value, or a script (xargs, parallel, find -exec, sed, awk, tar --to-command, rsync -e, env -S). The
+    guard does not rebuild that command; it holds when the command line names a rule tool."""
+    w = strip_wrappers(words)
+    lead = [os.path.basename(t) for t in words[: len(words) - len(w)]]
+    wrappers = [j for j, t in enumerate(lead) if t in WRAPPERS]
+    for n, j in enumerate(wrappers):
+        flags = lead[j + 1 : wrappers[n + 1] if n + 1 < len(wrappers) else len(lead)]
+        if lead[j] == "env" and any(re.match(r"-[A-Za-z]*S|--split-string", f) for f in flags):
+            return True
+    if any(lead[j] in STDIN_ARGS for j in wrappers):
+        # xargs with no command runs echo; any other wrapper left bare takes its command from the input
+        return not inert_command(w) if w else lead[wrappers[-1]] != "xargs"
+    if not w:
+        return False
+    name, args = os.path.basename(w[0]), w[1:]
+    if name in FINDERS:
+        rest = exec_rest(w)
+        return rest is not None and not inert_command(strip_wrappers(rest))
+    if name in SCRIPTED:
+        return not plain_script(SCRIPTED[name], args)
+    return runs_by_option(name, args)
+
+
+def fed_text(segs: list[dict]) -> str:
+    """The text of a command line that can reach an indirect runner: every command's words, heredoc bodies,
+    and here-strings, without the arguments of commands that only read data (a grep pattern, a file name).
+    echo and printf stay in, because their arguments are what they feed down a pipe."""
+    parts: list[str] = []
+    for seg in segs:
+        w = strip_wrappers(seg["words"])
+        quiet = bool(w) and args_are_data(w) and os.path.basename(w[0]) not in ("echo", "printf")
+        if not quiet or indirect_runner(seg["words"]):
+            parts += seg["words"]
+            if w and SCRIPTED.get(os.path.basename(w[0])) == "sed":
+                parts += [
+                    re.sub(r"(?<![A-Za-z])e", "e ", t) for t in w
+                ]  # sed's e command needs no space before its command
+        parts += [body for body, _ in seg["docs"]] + seg["strings"]
+    return "\n".join(parts)
+
+
+def stdin_consumer(chain: list[dict], tools: set[str]) -> str:
+    """What reads a heredoc or here-string down its pipeline: "" when every command only stores or prints
+    it, "remote" for ssh, "local" for a shell or a launcher the guard does not know."""
+    kind = ""
+    for seg in chain:
+        w = strip_wrappers(seg["words"])
+        if not w or (args_are_data(w) and not indirect_runner(seg["words"])) or os.path.basename(w[0]) in tools:
             continue
-        if t.startswith("-"):
-            if "=" not in t and t in value_flags:
-                skip = True
+        kind = "remote" if kind == "remote" or "ssh" in map(os.path.basename, w) else "local"
+    return kind
+
+
+def shell_args(args: list[str], late_c: bool) -> tuple[bool, bool, list[str]]:
+    """Whether a shell was given -c, whether it was given -s, and its operands: with -c the first is the command.
+    `late_c` also accepts -c after the first operand, as script(1) does."""
+    saw_c, saw_s, i = False, False, 0
+    while i < len(args):
+        t = args[i]
+        if t == "--":
+            i += 1
+            break
+        if len(t) < 2 or t[0] not in "-+":
+            break
+        if t.startswith("--"):
+            i += t in ("--rcfile", "--init-file")
+        else:
+            saw_c = saw_c or (t[0] == "-" and "c" in t)
+            saw_s = saw_s or (t[0] == "-" and "s" in t)
+            i += t[-1] in "oO"
+        i += 1
+    rest = args[i:]
+    late = next((j for j, t in enumerate(rest) if re.fullmatch(r"-[A-Za-z]*c[A-Za-z]*", t)), None)
+    if late_c and not saw_c and late is not None:
+        saw_c, rest = True, rest[late + 1 :]
+    return saw_c, saw_s, rest
+
+
+def ansible_module(args: list[str]) -> str:
+    mod = "command"
+    for j, t in enumerate(args):
+        if t in ("-m", "--module-name") and j + 1 < len(args):
+            mod = args[j + 1]
+        elif t.startswith("--module-name=") or re.fullmatch(r"-m.+", t):
+            mod = t.split("=", 1)[1] if t.startswith("--") else t[2:]
+    return mod
+
+
+def match_rules(tool: str, args: list[str], rules: list[dict], remote: bool, bare: bool, text: str) -> list[dict]:
+    """Rule hits for one candidate command. `bare` is False where the tool name may be a plain argument of
+    another command, so rules that need no verb do not match there."""
+    hits = []
+    for rule in rules:
+        on_remote = remote or any(a.split("=")[0] in rule.get("remote_flags", []) for a in args)
+        if tool not in rule["tools"] or (rule.get("remote_only") and not on_remote):
             continue
-        pos.append(t)
-    return pos
+        danger = next((a for a in args if a.split("=")[0] in rule.get("danger_flags", [])), None)
+        if danger:
+            hits.append(guard_hit(tool, danger, rule["reason"], text))
+            continue
+        if set(rule.get("safe_flags", [])) & set(args):
+            continue
+        if rule.get("safe_modules") and ansible_module(args) in rule["safe_modules"]:
+            continue
+        pos, lead = positionals(args, set(rule.get("value_flags", [])))
+        if rule.get("requires") and rule["requires"] not in pos:
+            continue
+        matched = None
+        if rule.get("any_verb_regex"):
+            rx = re.compile(rule["any_verb_regex"])
+            matched = next((p for p in pos if rx.search(p)), None)
+        else:
+            for verb in rule["verbs"]:
+                words = verb.split()
+                if (words or bare) and any(pos[k : k + len(words)] == words for k in range(lead + 1)):
+                    matched = verb or tool
+                    break
+        if matched is not None:
+            hits.append(guard_hit(tool, matched, rule["reason"], text))
+    return hits
+
+
+def classify_segment(seg: dict, raw: str, rules: list[dict], tools: set[str], remote: bool, depth: int) -> list[dict]:
+    """Hits for one simple command: what its own words show, or a hold when it runs commands the guard does
+    not read on a command line that names a rule tool."""
+    hits = literal_hits(seg, raw, rules, tools, remote, depth)
+    if not hits and seg.get("named") and indirect_runner(seg["words"]):
+        name, text = os.path.basename(seg["words"][0]), " ".join(seg["words"])
+        reason = "runs commands the guard cannot read, on a command line that names an infra tool"
+        hits.append(guard_hit(name, "unreadable", reason, text))
+    return hits
+
+
+def literal_hits(seg: dict, raw: str, rules: list[dict], tools: set[str], remote: bool, depth: int) -> list[dict]:
+    """Hits in the words of one simple command: every rule tool, and every shell, ssh, eval, su, or watch payload."""
+    w = strip_wrappers(seg["words"])
+    hits: list[dict] = []
+    if "watch" in map(os.path.basename, seg["words"][: len(seg["words"]) - len(w)]):
+        return classify(" ".join(w), rules, remote, depth + 1)  # watch hands its arguments to sh -c
+    if not w or os.path.basename(w[0]) in ("echo", "printf"):
+        return hits
+    if os.path.basename(w[0]) in FINDERS:
+        rest = exec_rest(w)
+        if rest is not None:
+            return literal_hits(dict(seg, words=rest), raw, rules, tools, remote, depth)
+    data, seen, text = args_are_data(w), False, " ".join(w)
+    fed = seg["pipe_in"] or bool(seg["strings"])
+    for i, t in enumerate(w):
+        if i and (t.startswith("-") or not COMMAND_WORD.fullmatch(t)):
+            continue
+        name, args = os.path.basename(t), w[i + 1 :]
+        if name in tools:
+            hits += match_rules(name, args, rules, remote, i == 0 or not (data or seen), text)
+            seen = True
+            if name == "idstack":  # the rest is idstack's own arguments (guard test <command>)
+                break
+        elif i and data:
+            continue
+        elif name == "eval" and i == 0:
+            hits += classify(" ".join(args), rules, remote, depth + 1)
+            break
+        elif name in SHELLS:
+            saw_c, saw_s, rest = shell_args(args, name == "script")
+            if saw_c and rest:
+                hits += classify(rest[0], rules, remote, depth + 1)
+            elif saw_c:
+                hits.append(guard_hit(name, "-c", "a shell was given -c with no command the guard can read", text))
+            elif fed and (saw_s or not rest or rest[0] in STDIN_PATHS) and names_tool(raw, tools):
+                hits.append(guard_hit(name, "stdin", "a shell reads commands that name an infra tool", text))
+            if saw_c:
+                break
+        elif name in ("source", ".") and i == 0:
+            if fed and args[:1] and args[0] in STDIN_PATHS and names_tool(raw, tools):
+                hits.append(guard_hit(name, "stdin", "a shell reads commands that name an infra tool", text))
+        elif name == "ssh":
+            j = 0
+            while j < len(args) and args[j].startswith("-"):
+                j += 2 if len(args[j]) == 2 and args[j][1] in SSH_VALUE_FLAGS else 1
+            if j >= len(args):
+                continue
+            host, rest = args[j], args[j + 1 :]
+            rest = rest[1:] if rest[:1] == ["--"] else rest
+            sub = classify(" ".join(rest), rules, True, depth + 1) if rest else []
+            words = " ".join(rest).split()
+            inner = strip_wrappers(words)
+            reads = not inner or os.path.basename(inner[0]) in SHELLS or indirect_runner(words)
+            if fed and reads and names_tool(raw, tools):
+                sub.append(guard_hit("ssh", "stdin", "a remote shell reads commands that name an infra tool", text))
+            hits += [dict(h, remote=host) for h in sub]
+            break
+        elif name in ("su", "runuser"):
+            flags = ("-c", "--command", "--session-command")
+            at = next((j for j, a in enumerate(args) if a.split("=")[0] in flags), None)
+            if at is None:
+                continue
+            payload = args[at].split("=", 1)[1] if "=" in args[at] else next(iter(args[at + 1 : at + 2]), None)
+            if payload is None:
+                hits.append(guard_hit(name, "-c", "a shell was given -c with no command the guard can read", text))
+            else:
+                hits += classify(payload, rules, remote, depth + 1)
+            break
+    return hits
 
 
 def classify(cmd: str, rules: list[dict], remote: bool = False, depth: int = 0) -> list[dict]:
+    """Rule hits for a shell command. Text the guard cannot read (too deeply nested, or unparsable and
+    naming a rule tool) is a hit."""
+    if depth > MAX_DEPTH:
+        return [guard_hit("?", "nested", "nested too deeply for the guard to read", cmd)]
+    tools = {t for rule in rules for t in rule["tools"]}
+    try:
+        segs, _, subs, comments = scan_script(cmd)
+    except GuardParseError:
+        return unparsed(cmd, tools)
     hits: list[dict] = []
-    if depth > 3:
-        return hits
-    for raw in split_segments(cmd):
-        seg = strip_wrappers(raw)
-        if not seg:
-            continue
-        tool, args = os.path.basename(seg[0]), seg[1:]
-        # idstack anywhere in argv (python3 -u bin/idstack, uv run idstack, ...) is the idstack tool.
-        if INTERPRETERS.fullmatch(tool):
-            at = next((j for j, t in enumerate(args[:6]) if os.path.basename(t) == "idstack"), None)
-            if at is not None:
-                tool, args = "idstack", args[at + 1 :]
-        # -c alone or in a short-flag cluster (bash -lc, sh -ec)
-        cflag = next((j for j, t in enumerate(args) if re.fullmatch(r"-[A-Za-z]*c[A-Za-z]*", t)), None)
-        if tool in SHELLS and cflag is not None:
-            if cflag + 1 < len(args):
-                hits += classify(args[cflag + 1], rules, remote, depth + 1)
-            continue
-        if tool == "ssh":
-            i = 0
-            while i < len(args) and args[i].startswith("-"):
-                flag = args[i]
-                i += 2 if len(flag) == 2 and flag[1] in SSH_VALUE_FLAGS else 1
-            if i < len(args):
-                host, rest = args[i], args[i + 1 :]
-                if rest:
-                    hits += [dict(h, remote=host) for h in classify(" ".join(rest), rules, True, depth + 1)]
-            continue
-        for rule in rules:
-            on_remote = remote or any(a.split("=")[0] in rule.get("remote_flags", []) for a in args)
-            if tool not in rule["tools"] or (rule.get("remote_only") and not on_remote):
-                continue
-            danger = next((a for a in args if a.split("=")[0] in rule.get("danger_flags", [])), None)
-            if danger:
-                hits.append({"tool": tool, "verb": danger, "reason": rule["reason"], "segment": " ".join(seg)[:300]})
-                continue
-            if set(rule.get("safe_flags", [])) & set(args):
-                continue
-            if rule.get("safe_modules"):
-                mod = args[args.index("-m") + 1] if "-m" in args and args.index("-m") + 1 < len(args) else "command"
-                if mod in rule["safe_modules"]:
-                    continue
-            pos = positionals(args, set(rule.get("value_flags", [])))
-            if rule.get("requires") and rule["requires"] not in pos:
-                continue
-            matched = None
-            if rule.get("any_verb_regex"):
-                rx = re.compile(rule["any_verb_regex"])
-                matched = next((p for p in pos if rx.search(p)), None)
-            else:
-                for verb in rule["verbs"]:
-                    words = verb.split()
-                    if pos[: len(words)] == words:
-                        matched = verb or tool
-                        break
-            if matched is not None:
-                hits.append({"tool": tool, "verb": matched, "reason": rule["reason"], "segment": " ".join(seg)[:300]})
+    named = names_tool(fed_text(segs), tools)
+    # A comment is classified too: a wrong guess about where one starts must not hide a command.
+    for text in subs + comments:
+        hits += classify(text, rules, remote, depth + 1)
+    for k, seg in enumerate(segs):
+        if seg["docs"] or seg["strings"]:
+            end = k + 1
+            while end < len(segs) and (segs[end - 1]["pipe_out"] or segs[end]["pipe_in"]):
+                end += 1
+            kind = stdin_consumer(segs[k:end], tools)
+            scripts = [body for body, _ in seg["docs"]] + seg["strings"] if kind else []
+            for body, quoted in [] if kind else seg["docs"]:
+                if not quoted:  # the shell expands an unquoted body before anything reads it
+                    try:
+                        scan_dquote(body, 0, [], scripts, heredoc=True)
+                    except GuardParseError:
+                        hits += unparsed(body, tools)
+            for text in scripts:
+                hits += classify(text, rules, remote or kind == "remote", depth + 1)
+        hits += classify_segment(dict(seg, named=named), cmd, rules, tools, remote, depth)
     return hits
 
 
@@ -1109,29 +1672,57 @@ def is_ambiguous(cmd: str) -> bool:
     return False
 
 
+GUARD_MODES = ("off", "log", "ask")  # loosest first
+
+
 def guard_config() -> dict:
     cfg = {"mode": "off", "jev": False}
     path = CONFIG_DIR / "guard.json"
     if path.is_file():
         try:
-            cfg.update(json.loads(path.read_text()))
+            doc = json.loads(path.read_text())
+            if not isinstance(doc, dict):
+                raise TypeError("guard.json is not an object")
+            cfg.update(doc)
         except (OSError, ValueError, TypeError):  # present but unreadable: hold commands rather than go quiet
             cfg["mode"] = "ask"
-    if os.environ.get("IDSTACK_GUARD_MODE"):
-        cfg["mode"] = os.environ["IDSTACK_GUARD_MODE"]
-    if cfg["mode"] not in ("off", "log", "ask"):
+    if cfg["mode"] not in GUARD_MODES:
         cfg["mode"] = "ask"
+    env = os.environ.get("IDSTACK_GUARD_MODE")
+    if env:  # the environment can raise the mode, never lower it; an unknown value means ask
+        env = env if env in GUARD_MODES else "ask"
+        cfg["mode"] = max(cfg["mode"], env, key=GUARD_MODES.index)
     return cfg
 
 
-def cmd_hash(cmd: str) -> str:
-    # Exact text: any change, even whitespace, needs a new approval.
-    return hashlib.sha256(cmd.encode()).hexdigest()
+def guard_cwd(cwd: str | None = None) -> str:
+    return os.path.realpath(cwd or os.getcwd())
+
+
+def cmd_hash(cmd: str, cwd: str | None = None) -> str:
+    # Exact text in one directory: any change, even whitespace, or another directory needs a new approval.
+    return hashlib.sha256(f"{guard_cwd(cwd)}\0{cmd}".encode()).hexdigest()
+
+
+def keep_private(path: Path, mode: int) -> None:
+    """Narrow a guard state path that an older release created with the default umask."""
+    try:
+        if path.stat().st_mode & 0o077:
+            path.chmod(mode)
+    except OSError:  # not ours to change
+        pass
+
+
+def guard_state_dir() -> Path:
+    """The guard's state directory, private to the user: the log keeps command text."""
+    STATE_DIR.mkdir(parents=True, exist_ok=True, mode=0o700)
+    keep_private(STATE_DIR, 0o700)
+    return STATE_DIR
 
 
 def update_tokens(fn) -> object:
     """Run fn(tokens) -> result under an exclusive lock on the allow-once file; fn mutates tokens."""
-    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    guard_state_dir()
     path = STATE_DIR / "guard-allow.json"
     with (STATE_DIR / "guard-allow.lock").open("w") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
@@ -1145,8 +1736,8 @@ def update_tokens(fn) -> object:
         return result
 
 
-def consume_allow(cmd: str) -> bool:
-    h, now = cmd_hash(cmd), time.time()
+def consume_allow(cmd: str, cwd: str) -> bool:
+    h, now = cmd_hash(cmd, cwd), time.time()
     return update_tokens(lambda tokens: tokens.pop(h, 0) > now)
 
 
@@ -1166,17 +1757,23 @@ def guard_decide(cmd: str, cfg: dict) -> dict:
 
 
 def guard_log(entry: dict) -> None:
-    STATE_DIR.mkdir(parents=True, exist_ok=True)
-    with (STATE_DIR / "guard.log").open("a") as fh:
+    path = guard_state_dir() / "guard.log"
+    with os.fdopen(os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600), "a") as fh:
+        keep_private(path, 0o600)
         fh.write(json.dumps(entry) + "\n")
 
 
-def extract_command(payload: dict) -> str:
+def extract_command(payload) -> str | None:
+    """The shell command a hook payload carries, or None when it carries none the guard can read."""
+    if not isinstance(payload, dict):
+        return None
     ti = payload.get("tool_input") or payload.get("args") or {}
     cmd = ti.get("command") if isinstance(ti, dict) else None
-    if isinstance(cmd, list):
-        cmd = shlex.join(cmd)
-    return cmd or payload.get("command") or ""
+    if cmd is None:
+        cmd = payload.get("command")
+    if isinstance(cmd, list) and all(isinstance(c, str) for c in cmd):
+        return shlex.join(cmd)
+    return cmd if isinstance(cmd, str) else None
 
 
 def hook_response(harness: str, msg: str) -> None:
@@ -1228,17 +1825,25 @@ def guard_hook_inner(a) -> int:
         return EXIT_OK
     payload = json.loads(sys.stdin.read() or "{}")
     cmd = extract_command(payload)
-    if not cmd:
+    if cmd is None:  # held like a match: the guard cannot say the call is safe
+        cmd = ""
+        d = {"hits": [guard_hit("?", "unreadable", "the shell call carries no command the guard can read", "")]}
+        d["source"] = "rules"
+    elif not cmd.strip():
         return EXIT_OK
-    d = guard_decide(cmd, cfg)
-    if not d["match"]:
-        return EXIT_OK
+    else:
+        d = guard_decide(cmd, cfg)
+        if not d["match"]:
+            return EXIT_OK
+    seen = payload.get("cwd") if isinstance(payload, dict) else None
+    cwd = guard_cwd(seen if isinstance(seen, str) else None)
     reason = "; ".join(f"{h['tool']} {h['verb']}: {h['reason']}" for h in d["hits"])
     entry = {
         "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "harness": a.harness,
         "mode": cfg["mode"],
         "cmd": cmd[:500],
+        "cwd": cwd,
         "reason": reason,
         "source": d["source"],
     }
@@ -1246,14 +1851,14 @@ def guard_hook_inner(a) -> int:
         guard_log(dict(entry, decision="logged"))
         return EXIT_OK
     msg = (
-        f"idstack guard: state-mutating command ({reason}). Show a gate block per the id-mode "
+        f"idstack guard: state-mutating command in {cwd} ({reason}). Show a gate block per the id-mode "
         f"references/gates.md and get the operator's approval for this exact command first."
     )
     if a.harness == "claude":
         guard_log(dict(entry, decision="ask"))
         hook_response(a.harness, msg)
         return EXIT_OK
-    if consume_allow(cmd):
+    if cmd and consume_allow(cmd, cwd):
         guard_log(dict(entry, decision="allowed-once"))
         return EXIT_OK
     guard_log(dict(entry, decision="deny"))
@@ -1262,8 +1867,9 @@ def guard_hook_inner(a) -> int:
         msg
         + (
             " This harness cannot ask, so the command was blocked. Show the gate block and wait. Once the "
-            "operator approves and allows it from their own terminal, rerun the command unchanged. Never try to "
-            "allow, disable, or reconfigure the guard yourself."
+            f"operator approves and runs `idstack guard allow-once --cwd {shlex.quote(cwd)} '<command>'` in "
+            "their own terminal, rerun the command unchanged from the same directory. Never try to allow, "
+            "disable, or reconfigure the guard yourself."
         ),
     )
     return EXIT_OK
@@ -1414,6 +2020,8 @@ def guard_install(a) -> int:
 def cmd_guard(a) -> int:
     if a.action == "hook":
         return guard_hook(a)
+    if a.action in ("test", "allow-once") and not " ".join(a.command).strip():
+        raise usage_error(f"guard {a.action} needs the command, quoted as one argument")
     if a.action == "test":
         cmd = " ".join(a.command)
         d = guard_decide(cmd, guard_config())
@@ -1449,8 +2057,9 @@ def cmd_guard(a) -> int:
         cmd = " ".join(a.command)
         if not (sys.stdin.isatty() and sys.stdout.isatty()):
             return fail(a, "cannot allow-once: no terminal; run it from an interactive shell", EXIT_FAIL)
-        update_tokens(lambda tokens: tokens.__setitem__(cmd_hash(cmd), time.time() + a.ttl))
-        emit({"allowed": cmd, "ttl": a.ttl}, a.json, f"allowed once for {a.ttl}s: {cmd}")
+        cwd = guard_cwd(a.cwd)
+        update_tokens(lambda tokens: tokens.__setitem__(cmd_hash(cmd, cwd), time.time() + a.ttl))
+        emit({"allowed": cmd, "ttl": a.ttl, "cwd": cwd}, a.json, f"allowed once for {a.ttl}s in {cwd}: {cmd}")
         return EXIT_OK
     if a.action in ("install", "uninstall"):
         a.uninstall = a.action == "uninstall"
@@ -1586,7 +2195,7 @@ def main() -> int:
             [
                 "IDSTACK_STATE_DIR, IDSTACK_CONFIG_DIR, XDG_STATE_HOME, XDG_CONFIG_HOME",
                 "    where guard state and config live",
-                "IDSTACK_GUARD_MODE  overrides the configured mode (log or ask)",
+                "IDSTACK_GUARD_MODE  raises the configured mode to log or ask; it never lowers it",
                 "CODEX_HOME  Codex hooks location for install",
                 "TYPESAFE_API_KEY, IDSTACK_JEV_URL",
                 "    used with --jev on to judge ambiguous commands: the command text and the",
@@ -1604,6 +2213,7 @@ def main() -> int:
         nargs="*",
         help="command for test or allow-once; quote it as one argument, since allow-once matches the exact text",
     )
+    p.add_argument("--cwd", help="directory the held command runs in, for allow-once (default: the current one)")
     p.add_argument("--harness", choices=("claude", "codex", "opencode"), default="claude")
     p.add_argument("--mode", choices=("log", "ask"), default="ask", help="mode for enable")
     p.add_argument(
@@ -1617,7 +2227,13 @@ def main() -> int:
     p.add_argument("--json", action="store_true")
     p.set_defaults(fn=cmd_guard)
 
-    a = ap.parse_args()
+    a, extra = ap.parse_known_args()
+    # Before Python 3.13 argparse ends a `*` positional at the first option, so a command that
+    # follows `allow-once --cwd DIR` arrives here instead of in `command`.
+    if extra and a.cmd == "guard" and not a.command and not extra[0].startswith("-"):
+        a.command = extra
+    elif extra:
+        ap.error("unrecognized arguments: " + " ".join(extra))
     try:
         return a.fn(a)
     except CliError as e:
