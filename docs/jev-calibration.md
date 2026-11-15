@@ -15,6 +15,8 @@ Last run: 2026-10-28, model `jev-1.14.0`, thresholds as committed.
 | suspect-changes | rank 0.3 | 26 / 13 | 0 | 0 / 1 |
 | public-hygiene | rank 0.3 | 28 / 13 | 0 | 0 / 0 |
 
+Open: the plan-reading and guard-ambiguous rows predate two changes and have not been rerun, because no API key was available when they were made: the plan-reading case items now have the shape `idstack plan-summary --json` emits (labels unchanged), and guard commands are redacted before they are sent.
+
 outgoing-claims is the noisiest: about one claim in five that the evidence supports still gets flagged for rewording. That costs a second look at a draft, which is the point of the check.
 
 Rerun after any change to a battery's wording, threshold, or pinned model:
@@ -23,4 +25,4 @@ Rerun after any change to a battery's wording, threshold, or pinned model:
 for b in src/questions/*.json; do bin/idstack judge "$(basename "$b" .json)" --eval; done
 ```
 
-The run needs `TYPESAFE_API_KEY` in the environment and makes one API call per case. A holdout false negative or a failed call exits 1.
+The run needs `TYPESAFE_API_KEY` in the environment and makes one API call per case. A holdout false negative, or a run that selects no cases, exits 1; a failed call exits 3.
