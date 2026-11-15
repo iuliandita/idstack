@@ -109,9 +109,47 @@ Both install commands back up the file they edit, and `guard uninstall --harness
 removes only idstack's entry. A config written as `opencode.jsonc` is left alone: add
 `{"package": "<clone>/harness/opencode/guard"}` to its `plugins` list by hand.
 
-Codex and OpenCode cannot ask, so in `ask` mode they block a matching command. After you approve
-it, run `idstack guard allow-once '<command>'` in your own terminal, quoting the exact text the agent
-used (any difference, even in spaces, needs a new approval), and let the agent rerun it.
+Codex and OpenCode cannot ask, so in `ask` mode they block a matching command, and the message names
+the directory the hook saw. After you approve it, run
+`idstack guard allow-once --cwd <that directory> '<command>'` in your own terminal, quoting the exact
+text the agent used, and let the agent rerun it. `--cwd` defaults to the current directory. The
+approval covers that text in that directory once: any difference, even in spaces, or another
+directory needs a new one. `guard test` and `guard allow-once` without a command exit 2.
+
+**What the guard holds.** It reads a command the way a shell does: quotes, comments, redirections,
+heredocs, command substitutions, and commands behind a launcher (`xargs`, `eval`, `find -exec`,
+`uv run`, `ssh`, `bash -c`, and so on). It also holds what it cannot read:
+
+- text it cannot parse, when that text names a tool the rules cover;
+- commands nested more than four levels deep, and `-c` with no command;
+- a shell or `ssh` fed by a pipe or here-string, when the text names a tool the rules cover;
+- a shell call whose payload carries no command;
+- a tool that needs no verb, such as `ansible-playbook`, behind any command the guard does not know.
+
+A comment is read as well, so one that spells out a state-mutating command is held.
+
+A heredoc is skipped only when nothing after it can run it (`cat` to a file, `gh ... --body-file -`),
+so a commit message or PR body that mentions a destructive command passes. A quoted string that is
+data, such as a `grep` pattern, passes too.
+
+The plugin hooks for Claude Code and Codex and the OpenCode plugin start `hooks/guard_hook.py`,
+which runs the CLI. If the CLI cannot be loaded (Python older than 3.11, a damaged checkout), it
+holds every shell command while the mode is `ask` or `guard.json` cannot be read, and does nothing
+otherwise. An entry that `guard install --harness codex` wrote to `$CODEX_HOME/hooks.json` calls the
+CLI directly and has no such fallback.
+
+The guard creates its state directory with mode `0700` and its log with `0600`, because the log keeps
+the first 500 characters of each held command.
+
+Limits:
+
+- The tests check what the classifier and the hook answer, not that a harness blocks on that answer.
+  Codex and OpenCode live behavior is unverified.
+- `allow-once` binds the command text and the directory. It cannot bind a plan file: a plan that
+  changed after the approval still applies under the same command.
+- `ansible-playbook --check` and `ansible --check` count as safe, although a play can set
+  `check_mode: false` on a task and change hosts during a check run.
+- Aliases, scripts, variables, and code passed to an interpreter (`python3 -c`, `awk`) are not read.
 
 ## pstack model files
 
@@ -292,7 +330,7 @@ older than 4.4, which prints only `ok`, `errors`, and `exit_code`.
 | `idstack guard test` | `match`, `hits`, `source` |
 | `idstack guard enable`, `disable` | `mode`, `jev` |
 | `idstack guard status` | `config`, `recent` |
-| `idstack guard allow-once` | `allowed`, `ttl` |
+| `idstack guard allow-once` | `allowed`, `ttl`, `cwd` |
 | `idstack guard install`, `uninstall` | `harness`, `path`, `uninstall`, `changed`, `dry_run` and `config` (with `--dry-run`), `plugin_hook` (Codex: the plugin's hook file, or null) |
 
 `idstack guard hook` is the harness hook protocol. It reads and writes the harness's own JSON and
@@ -319,7 +357,7 @@ The CLI itself reads:
 | --- | --- | --- |
 | `IDSTACK_CONFIG_DIR` | `$XDG_CONFIG_HOME/idstack` (`~/.config/idstack`) | Guard settings. |
 | `IDSTACK_STATE_DIR` | `$XDG_STATE_HOME/idstack` (`~/.local/state/idstack`) | Guard log and allow-once tokens. |
-| `IDSTACK_GUARD_MODE` | unset | `off`, `log`, or `ask`, overriding the config file. |
+| `IDSTACK_GUARD_MODE` | unset | `log` or `ask`: raises the guard mode above the config file's. It never lowers it, and an unknown value means `ask`. |
 | `TYPESAFE_API_KEY` | unset | Jev. Without it, `idstack judge` exits 4 and playbooks use their deterministic checks; a failed call exits 3. |
 | `IDSTACK_JEV_URL` | `https://api.typesafe.ai/v1/systemone` | The Jev endpoint. |
 

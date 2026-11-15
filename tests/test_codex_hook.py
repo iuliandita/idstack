@@ -18,7 +18,7 @@ CLAUDE_HOOKS = {
                 "hooks": [
                     {
                         "type": "command",
-                        "command": 'python3 "${CLAUDE_PLUGIN_ROOT}/bin/idstack" guard hook --harness claude',
+                        "command": 'python3 "${CLAUDE_PLUGIN_ROOT}/hooks/guard_hook.py" guard hook --harness claude',
                         "timeout": 15,
                     }
                 ],

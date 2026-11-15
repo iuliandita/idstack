@@ -4,16 +4,19 @@ import { execFile } from "node:child_process"
 import { dirname, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 
-const CLI = resolve(dirname(fileURLToPath(import.meta.url)), "../../../bin/idstack")
+// The hook entry point answers for the CLI when python3 cannot load it.
+const HOOK = resolve(dirname(fileURLToPath(import.meta.url)), "../../../hooks/guard_hook.py")
 const SHELL_TOOLS = new Set(["shell", "bash"])
 
 function hook(command, cwd) {
   return new Promise((done, fail) => {
-    const child = execFile(CLI, ["guard", "hook", "--harness", "opencode"], { cwd, timeout: 15000 }, (err, stdout) => {
+    const argv = [HOOK, "guard", "hook", "--harness", "opencode"]
+    const child = execFile("python3", argv, { cwd, timeout: 15000 }, (err, stdout) => {
       if (err) return fail(err)
       done(stdout.trim())
     })
-    child.stdin.end(JSON.stringify({ tool_name: "bash", tool_input: { command } }))
+    // A command that is not a string or a list of strings is sent as is: the CLI holds it in ask mode.
+    child.stdin.end(JSON.stringify({ tool_name: "bash", tool_input: { command }, cwd }))
   })
 }
 
@@ -23,10 +26,7 @@ async function setup(ctx) {
     const input = event.input
     const command = input?.command
     if (command === "") return
-    // A list is joined by the CLI; any other shape is held, since it cannot be checked.
-    const readable = typeof command === "string" || (Array.isArray(command) && command.every((c) => typeof c === "string"))
-    if (!readable) throw new Error("idstack guard: a shell call without a readable command was held (fail closed).")
-    const cwd = typeof input.workdir === "string" && input.workdir !== ""
+    const cwd = typeof input?.workdir === "string" && input.workdir !== ""
       ? resolve(ctx.location.directory, input.workdir)
       : ctx.location.directory
     let out
