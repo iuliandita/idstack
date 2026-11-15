@@ -126,7 +126,13 @@ heredocs, command substitutions, and commands behind a launcher (`xargs`, `eval`
 
 - text it cannot parse, when that text names a tool the rules cover;
 - commands nested more than four levels deep, and `-c` with no command;
-- a shell or `ssh` fed by a pipe or here-string, when the text names a tool the rules cover;
+- a shell or `ssh` fed by a pipe or here-string, when the text names a tool the rules cover, also
+  when the shell is told to read standard input (`-`, `/dev/stdin`);
+- a tool the rules cover behind `xargs` or `parallel`, when its arguments come from input the guard
+  cannot read and could supply the verb. Input from a heredoc, a here-string, or `echo` is read;
+- `sed`, `awk`, `tar`, `rsync`, and similar utilities when an option or their script runs a command:
+  the command is read where it is an option value, and held when it is not readable and the text
+  names a tool the rules cover;
 - a shell call whose payload carries no command;
 - a tool that needs no verb, such as `ansible-playbook`, behind any command the guard does not know.
 

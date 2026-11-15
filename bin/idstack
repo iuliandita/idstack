@@ -714,6 +714,7 @@ WRAPPERS = {
     "watch",
     "unbuffer",
     "xargs",
+    "parallel",
 }
 WRAPPER_VALUE_FLAGS = {
     "sudo": {
@@ -746,15 +747,19 @@ WRAPPER_VALUE_FLAGS = {
     "watch": {"-n", "-d", "--interval", "--differences"},
     "stdbuf": {"-i", "-o", "-e", "--input", "--output", "--error"},
     "xargs": {"-n", "-I", "-P", "-L", "-d", "-E", "-s", "-a", "--max-args", "--max-procs", "--delimiter", "--arg-file"},
+    "parallel": {"-j", "-I", "-N", "-n", "-d", "-a", "--jobs", "--max-args", "--delimiter", "--arg-file", "--colsep"},
 }
 SHELL_KEYWORDS = {"if", "then", "else", "elif", "fi", "do", "done", "while", "until", "{", "}", "!", "esac"}
 SSH_VALUE_FLAGS = set("BbcDEeFIiJLlmOoPpQRSWw")
 SHELLS = {"bash", "sh", "zsh", "dash", "ksh", "fish", "ash", "script"}
+STDIN_PATHS = {"-", "/dev/stdin", "/dev/fd/0", "/proc/self/fd/0"}
+STDIN_ARGS = ("xargs", "parallel")  # launchers that build their command's arguments from standard input
 INFRA_HINT = re.compile(
     r"(terraform|tofu|kubectl|helm|argocd|flux|ansible|velero|aws|gcloud|az|doctl|qm|pct|pvesh|virsh|ssh)"
 )
 MAX_DEPTH = 4
 # Commands that run neither their arguments nor their stdin, so a tool name after one is data.
+# Some of them can still run a command through an option or their own script: see side_commands.
 NON_EXEC = re.compile(
     r"\[\[?|:|awk|base64|basename|bat|case|cat|cd|chmod|chown|column|cp|curl|cut|declare|df|diff|dir|dirname|du|echo"
     r"|egrep|export|false|fd|fgrep|file|for|gh|glab|grep|head|help|info|jq|last|lastb|less|ln|local|locate|ls|man"
@@ -762,7 +767,36 @@ NON_EXEC = re.compile(
     r"|select|sort|stat|tail|tar|tee|test|touch|tr|tree|true|type|uniq|unset|wc|wget|whereis|which|yay|yq"
 )
 GIT_EXEC = {"bisect", "foreach", "filter-branch", "--exec", "-x"}
-FIND_EXEC = {"-exec", "-execdir", "-ok", "-okdir"}
+FIND_EXEC = {
+    "find": {"-exec", "-execdir", "-ok", "-okdir"},
+    "fd": {"-x", "--exec", "-X", "--exec-batch"},
+    "fdfind": {"-x", "--exec", "-X", "--exec-batch"},
+}
+# Options whose value is a command the utility runs.
+RUNS_VALUE = {
+    "bat": ["--pager"],
+    "man": ["-P", "-H", "--pager", "--html"],
+    "rg": ["--pre", "--hostname-bin"],
+    "rsync": ["-e", "--rsh", "--rsync-path"],
+    "scp": ["-S", "-o"],
+    "sort": ["--compress-program"],
+    "tar": [
+        "-I",
+        "-F",
+        "--to-command",
+        "--checkpoint-action",
+        "--use-compress-program",
+        "--rsh-command",
+        "--rmt-command",
+        "--info-script",
+        "--new-volume-script",
+    ],
+    "wget": ["-e", "--execute", "--use-askpass"],
+}
+SCRIPTED = {"sed": "sed", "gsed": "sed", "awk": "awk", "gawk": "awk", "mawk": "awk", "nawk": "awk"}
+# sed's `e` command, or the `e` flag of `s`, runs a command.
+SED_RUNS = re.compile(r"(?:^|[\d$/;{}!\s])e(?=$|[\s;}])|[^\w\s\\][gpiImM0-9]*e[gpiImM0-9]*(?=$|[\s;}])")
+AWK_LITERAL = re.compile(r'"(?:\\.|[^"\\])*"|/(?:\\.|[^/\\\n])*/')
 PACKAGERS = re.compile(
     r"apk|apt|apt-get|brew|cargo|conda|dnf|gem|go|mamba|nix|npm|pip|pip3|pipx|pnpm|poetry|snap|uv|yarn|yum|zypper"
 )
@@ -1095,13 +1129,84 @@ def args_are_data(w: list[str]) -> bool:
     return NON_EXEC.fullmatch(name) is not None
 
 
+def side_commands(w: list[str]) -> list[str] | None:
+    """What a data utility runs through an option or its own script: None when it runs nothing, else the
+    commands, with "" for one the guard cannot read (a sed or awk script, a missing value)."""
+    name, args = os.path.basename(w[0]), w[1:]
+    kind = SCRIPTED.get(name)
+    if kind == "sed":
+        for a in args:
+            script = a.partition("=")[2] if a.startswith("--") else re.sub(r"^-[A-Za-z]*", "", a)
+            if SED_RUNS.search(script) or re.fullmatch(r"--file(=.*)?|-[A-Za-z]*f.*", a, re.S):
+                return [""]
+        return None
+    if kind == "awk":
+        skip = False
+        for a in args:
+            if skip or a.startswith(("-F", "-v", "--field-separator", "--assign")):
+                skip = not skip and a in ("-F", "-v", "--field-separator", "--assign")
+            elif re.fullmatch(r"-[fEil].*|--(file|exec|include|load)(=.*)?", a, re.S):
+                return [""]  # a program the guard cannot read
+            elif re.search(r"\bsystem\s*\(", a) or re.search(r"(?<!\|)\|(?!\|)", AWK_LITERAL.sub("", a)):
+                return [""]
+        return None
+    flags = RUNS_VALUE.get(name)
+    if not flags:
+        return None
+    if name == "tar" and args and not args[0].startswith("-"):
+        args = ["-" + args[0], *args[1:]]  # the old option style: tar xf
+    out: list[str] = []
+    for j, a in enumerate(args):
+        key, eq, value = a.partition("=")
+        after = next(iter(args[j + 1 : j + 2]), "")
+        if a.startswith("--"):  # GNU long options can be shortened
+            if len(key) > 3 and any(f.startswith(key) for f in flags if f.startswith("--")):
+                out.append(value if eq else after)
+        elif len(a) > 1 and a.startswith("-"):
+            for f in [f[1] for f in flags if not f.startswith("--")]:
+                if a[1] == f:
+                    out.append(a[2:] or after)
+                elif f in a:
+                    out.append(after if a.endswith(f) else "")
+    return [re.sub(r"^\w+=", "", v) for v in out] or None  # exec=CMD, ProxyCommand=CMD
+
+
+def stdin_args(flags: list[str], seg: dict, mark: str) -> tuple[list[str] | None, str]:
+    """The arguments xargs or parallel reads for its command, None when the guard cannot read them, and the
+    placeholder they replace when there is one."""
+    from_file = False
+    for j, f in enumerate(flags):
+        if f.startswith(("--arg-file", "-a")):
+            from_file = True
+        elif f in ("-I", "-i", "--replace"):
+            mark = (flags[j + 1 : j + 2] or ["{}"])[0] if f == "-I" else "{}"
+        elif f.startswith(("-I", "-i", "--replace=")):
+            mark = f.partition("=")[2] if f.startswith("--") else f[2:]
+    feed = seg.get("feed") or []
+    if from_file:
+        return None, mark
+    if seg["docs"] or seg["strings"]:
+        text = "\n".join([body for body, _ in seg["docs"]] + seg["strings"])
+    elif feed and os.path.basename(feed[0]) == "echo":
+        text = " ".join(t for t in feed[1:] if not re.fullmatch(r"-[neE]+", t))
+    elif feed and os.path.basename(feed[0]) == "printf":
+        text = " ".join(feed[2:] if "%" in "".join(feed[1:2]) else feed[1:])
+    else:
+        return None, mark
+    text = re.sub(r"\\[nt0]", " ", text)
+    try:
+        return shlex.split(text), mark
+    except ValueError:
+        return text.split(), mark
+
+
 def stdin_consumer(chain: list[dict], tools: set[str]) -> str:
     """What reads a heredoc or here-string down its pipeline: "" when every command only stores or prints
     it, "remote" for ssh, "local" for a shell or a launcher the guard does not know."""
     kind = ""
     for seg in chain:
         w = strip_wrappers(seg["words"])
-        if not w or args_are_data(w) or os.path.basename(w[0]) in tools:
+        if not w or (args_are_data(w) and side_commands(w) is None) or os.path.basename(w[0]) in tools:
             continue
         kind = "remote" if kind == "remote" or "ssh" in map(os.path.basename, w) else "local"
     return kind
@@ -1176,25 +1281,64 @@ def match_rules(tool: str, args: list[str], rules: list[dict], remote: bool, bar
     return hits
 
 
+def could_match(tool: str, args: list[str], mark: str, rules: list[dict]) -> bool:
+    """Whether arguments the guard cannot read could make this command match a rule: put in place of `mark`
+    when the arguments hold it, appended otherwise."""
+    for rule in rules:
+        if tool not in rule["tools"]:
+            continue
+        if rule.get("any_verb_regex") or rule.get("danger_flags") or rule.get("requires"):
+            return True
+        for verb in rule["verbs"]:
+            words = verb.split()
+            if mark in args:
+                tries = [[word if t == mark else t for t in args] for word in words]
+            else:  # "x" stands for the value of a flag the command line ends on
+                tries = [args + fill + words[n:] for n in range(len(words)) for fill in ([], ["x"])]
+            if any(match_rules(tool, t, [rule], True, True, "") for t in tries):
+                return True
+    return False
+
+
 def classify_segment(seg: dict, raw: str, rules: list[dict], tools: set[str], remote: bool, depth: int) -> list[dict]:
     """Hits for one simple command: every rule tool in it, and every shell, ssh, eval, su, or watch payload."""
     w = strip_wrappers(seg["words"])
     hits: list[dict] = []
-    if "watch" in map(os.path.basename, seg["words"][: len(seg["words"]) - len(w)]):
+    lead = [os.path.basename(t) for t in seg["words"][: len(seg["words"]) - len(w)]]
+    if "watch" in lead:
         return classify(" ".join(w), rules, remote, depth + 1)  # watch hands its arguments to sh -c
     if not w or os.path.basename(w[0]) in ("echo", "printf"):
         return hits
-    if os.path.basename(w[0]) == "find":
-        at = next((j for j, t in enumerate(w) if t in FIND_EXEC), None)
+    if os.path.basename(w[0]) in FIND_EXEC:
+        at = next((j for j, t in enumerate(w) if t in FIND_EXEC[os.path.basename(w[0])]), None)
         return hits if at is None else classify_segment(dict(seg, words=w[at + 1 :]), raw, rules, tools, remote, depth)
+    blind, mark = False, ""  # blind: the command takes arguments from input the guard cannot read
+    feeder = next((n for n in STDIN_ARGS if n in lead), None)
+    if feeder:
+        flags = seg["words"][lead.index(feeder) + 1 : len(lead)]
+        extra, mark = stdin_args(flags, seg, "{}" if feeder == "parallel" else "")
+        if extra is None or ":::" in w or "::::" in w:
+            blind = True
+        elif mark and any(mark in t for t in w):
+            w = [x for t in w for x in (extra if t == mark else [t.replace(mark, " ".join(extra))])]
+        else:
+            w = w + extra
     data, seen, text = args_are_data(w), False, " ".join(w)
     fed = seg["pipe_in"] or bool(seg["strings"])
+    for payload in side_commands(w) or []:
+        if payload:
+            hits += classify(payload, rules, remote, depth + 1)
+        elif names_tool(raw if fed or seg["docs"] else text, tools):
+            hits.append(guard_hit(os.path.basename(w[0]), "runs", "runs a command the guard cannot read", text))
     for i, t in enumerate(w):
         if i and (t.startswith("-") or not COMMAND_WORD.fullmatch(t)):
             continue
         name, args = os.path.basename(t), w[i + 1 :]
         if name in tools:
-            hits += match_rules(name, args, rules, remote, i == 0 or not (data or seen), text)
+            bare = i == 0 or not (data or seen)
+            hits += match_rules(name, args, rules, remote, bare, text)
+            if blind and bare and could_match(name, args, mark, rules):
+                hits.append(guard_hit(name, feeder, "takes its arguments from input the guard cannot read", text))
             seen = True
             if name == "idstack":  # the rest is idstack's own arguments (guard test <command>)
                 break
@@ -1207,12 +1351,17 @@ def classify_segment(seg: dict, raw: str, rules: list[dict], tools: set[str], re
             saw_c, saw_s, rest = shell_args(args, name == "script")
             if saw_c and rest:
                 hits += classify(rest[0], rules, remote, depth + 1)
+                if blind and names_tool(rest[0], tools):
+                    hits.append(guard_hit(name, feeder, "takes its arguments from input the guard cannot read", text))
             elif saw_c:
                 hits.append(guard_hit(name, "-c", "a shell was given -c with no command the guard can read", text))
-            elif fed and (saw_s or not rest) and names_tool(raw, tools):
+            elif fed and (saw_s or not rest or rest[0] in STDIN_PATHS) and names_tool(raw, tools):
                 hits.append(guard_hit(name, "stdin", "a shell reads commands that name an infra tool", text))
             if saw_c:
                 break
+        elif name in ("source", ".") and i == 0:
+            if fed and args[:1] and args[0] in STDIN_PATHS and names_tool(raw, tools):
+                hits.append(guard_hit(name, "stdin", "a shell reads commands that name an infra tool", text))
         elif name == "ssh":
             j = 0
             while j < len(args) and args[j].startswith("-"):
@@ -1270,7 +1419,8 @@ def classify(cmd: str, rules: list[dict], remote: bool = False, depth: int = 0) 
                         hits += unparsed(body, tools)
             for text in scripts:
                 hits += classify(text, rules, remote or kind == "remote", depth + 1)
-        hits += classify_segment(seg, cmd, rules, tools, remote, depth)
+        feed = segs[k - 1]["words"] if k and segs[k - 1]["pipe_out"] else []
+        hits += classify_segment(dict(seg, feed=feed), cmd, rules, tools, remote, depth)
     return hits
 
 
