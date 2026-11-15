@@ -8,8 +8,8 @@ public issue.
 ## Sources and generated files
 
 - `docs/plan.md` is the design. Change it in the same PR as any change that departs from it.
-- The three manifests (`plugin.json`, `.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json`)
-  carry the same version. Bump all three for a release.
+- The four manifests (`plugin.json`, `.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json`,
+  `.codex-plugin/plugin.json`) carry the same version. Bump all four for a release.
 - `config/pstack-models.json` sets the shipped default model per role; users override it in
   `~/.config/idstack/models.json`. Run `python3 scripts/pstack_models.py --dry-run` after editing;
   it rejects unknown models.
@@ -80,7 +80,7 @@ Feature and fix PRs target `develop` and are squash-merged. The version bump fol
 conventional-commit titles since the last tag: `feat` is minor, `fix` and `deps` are patch, `!` or
 `BREAKING CHANGE:` is major; `docs`, `chore`, `ci`, `test`, `style` alone do not release.
 
-1. On `develop`, bump the three manifests and move the `Unreleased` changelog entries under the new
+1. On `develop`, bump the four manifests and move the `Unreleased` changelog entries under the new
    version, by PR.
 2. Open a PR from `develop` to `main` and merge it with a merge commit, never a squash, so every
    `develop` commit stays in `main`'s history and the next release PR carries only new work.

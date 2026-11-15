@@ -20,7 +20,7 @@ v0.x was the prerelease phase, where breaking changes were expected.
 
 ### Added
 
-- A weekly `pstack-watch` workflow opens an issue when upstream pstack or the mirror pin drifts from `config/pstack-lock.json`.
+- A `pstack-watch` workflow runs every six hours and opens an issue when upstream pstack or the mirror pin drifts from `config/pstack-lock.json`.
 
 ### Fixed
 

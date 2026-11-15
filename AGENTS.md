@@ -44,7 +44,7 @@ puts the pinned markdownlint in `.github/tools/markdownlint/node_modules` (git-i
 - Issue first, branch from `develop`, PR into `develop`, conventional commits, `Closes #NN`. Never commit to `main` or `develop`.
 - No AI attribution in commits, PRs, tags, or files.
 - No private hosts, domains, IPs, machine paths, or work context in tracked files.
-- Keep the three manifest versions and `PSTACK_MIRROR_REF` in `install.sh` consistent.
+- Keep the four manifest versions and `PSTACK_MIRROR_REF` in `install.sh` consistent.
 - Test installer changes only against a throwaway directory with all env overrides set (see CONTRIBUTING.md).
 - Answers from Jev only tighten a gate, never loosen it.
 - Do not edit `canon.json`, `stack-check.py`, or `SOURCE` under `.github/stack/`.
