@@ -18,7 +18,7 @@ For a Terraform or OpenTofu change, from edit to verified apply.
 
 Owner line: you own the plan. Nothing applies that was not reviewed.
 
-1. Find the repo's rules: does an agent ever apply here, is apply manual or CI-driven, which binary (Terraform or OpenTofu) and version, where state lives. Repo rules win.
+1. Find the repo's rules: does an agent ever apply here, is apply manual or CI-driven, which binary (Terraform or OpenTofu) and version, where state lives. Stricter repo rules win.
 2. State sanity before planning: backend reachable, state serial and lineage look current, no unexpected local state file. A state that looks older than the last known apply stops here. This is the failure mode behind the February 2026 production `destroy`.
 3. Make the change. Prefer `moved`, `import`, and `removed` (with `destroy = false` when keeping the real resource) blocks over state commands, because they show up in the plan.
 4. Static checks: `fmt -check`, `validate`, the repo's linters and scanners (tflint, trivy or checkov). Fix new findings or record why not.
@@ -26,7 +26,7 @@ Owner line: you own the plan. Nothing applies that was not reviewed.
 6. Summarize with `idstack plan-summary plan.json` (or `plan-reader`): counts, every delete and replace, changes to stateful, IAM, and network resources, addresses outside the intended scope. Anything unexpected sends you back to step 3.
 7. For multi-tenant or risk-grouped repos, split into targeted plans per group, one file each, lowest risk first.
 8. Open the PR with the plan summary in the body. Merging does not apply unless the repo says it does.
-9. **Gate:** apply the saved plan file, nothing else. A predicate grant can pass this gate only if `plan-summary` passes the predicate.
+9. **Gate:** apply the saved plan file, nothing else. A predicate grant can pass this gate only if `plan-summary` passes the predicate. When CI applies on merge, the merge is this gate and its evidence is CI's own plan for the commit being merged, not the local plan. If CI publishes no plan before it applies, no predicate grant passes.
 10. After apply, re-plan. Expect no changes. Anything else is drift or a partial apply: stop and report.
 11. Run the verification queries from the gate. Log the result.
 
@@ -50,7 +50,7 @@ Owner line: you own the rendered diff. Git is the only way in.
 6. Open the PR with the render-and-diff summary.
 7. **Gate** at merge if merge triggers auto-sync, else at sync.
 8. After sync: compare the app's synced revision to the merged git commit, not just "Synced/Healthy". Wait for health with a timeout. Check the running image digests or config values that should have changed.
-9. Rollback is `git revert` through the same path.
+9. Rollback is `git revert` through the same path, and it is a gate too.
 
 Calls: **kubernetes**, **kubernetes-health**.
 Principles: plan-before-apply, prove-it-works, reversible-first.
@@ -65,11 +65,13 @@ Owner line: you own convergence. A second run changes nothing.
 1. Find the delivery path: run by hand, or applied by CI on merge. If CI applies on merge, the merge is the gate.
 2. Make the change.
 3. `ansible-lint` with the repo's profile, `--syntax-check`.
-4. `--check --diff --limit <one canary host>`. Note tasks that check mode cannot predict (`command`, `shell`).
-5. **Gate:** run on the canary.
-6. Run the same play again on the canary. Expect `changed=0`. Anything else is an idempotence bug: fix before going wider.
-7. **Gate:** the rest of the fleet with `serial`, restart-sensitive services last.
-8. Verify per host with a read-only check of the service the change affects.
+4. Before any `--check` run, search the plays and roles in scope for `check_mode: false`. A task that sets it runs for real under `--check`: **Gate** before that run.
+5. `--check --diff --limit <one canary host>`. Note tasks that check mode cannot predict (`command`, `shell`, `raw`, `script`).
+6. **Gate:** run on the canary.
+7. Run the same play again on the canary. Expect `changed=0`. Anything else is an idempotence bug: fix before going wider.
+8. `--check --diff` for the rest of the fleet.
+9. **Gate:** the rest of the fleet with `serial`, restart-sensitive services last. Its evidence is the fleet check-mode output, not the canary's.
+10. Verify per host with a read-only check of the service the change affects.
 
 Calls: **ansible**, the matching OS skill for the target distro.
 Principles: make-operations-idempotent, reversible-first, sequence-verifiable-units.
@@ -85,7 +87,7 @@ Owner line: you own reachability. Keep a way back in.
 2. Back up the current config: zone export, firewall config export, proxy config in git.
 3. Confirm an out-of-band path exists (console, second VPN, a session kept open) before touching anything that could cut access.
 4. Make the change in IaC where it lives in IaC. For appliances without an API, draft the exact change for the human to apply.
-5. For DNS, lower TTL ahead of a cutover. For certificates, use a staging issuer first when available.
+5. For DNS, lower TTL ahead of a cutover as its own **Gate**. For certificates, use a staging issuer first when available.
 6. **Gate** per location. One rule at a time on firewalls, with a revert-on-timeout where the appliance supports it.
 7. Verify from each side: `dig` against the authoritative server and a public resolver, `curl --resolve`, `openssl s_client` for the served chain and expiry, a connection test from each network segment, and the VPN client actually connecting.
 8. Remove the stale entries found in step 1, gated.
@@ -105,7 +107,7 @@ Owner line: you own what the bump changes, not just that CI passed.
 3. For charts: diff default values between versions, render old and new with the repo's values, diff the renders, diff CRDs separately (Helm does not upgrade CRDs).
 4. For providers and modules: run the plan and summarize it, as in `iac-change`.
 5. For GitHub Actions: confirm the new ref is pinned by SHA and comes from the original repo.
-6. Merge the ones that are green, low-risk, and do not deploy on merge, with short squash messages. Stop at the operator's stop line.
+6. Merge the ones that are green, low-risk (patch or minor, not stateful, no flagged or unsettled release-note bullet), and do not deploy on merge, with short squash messages. Stop at the operator's stop line.
 7. **Gate** for each bump whose merge deploys, and for every major.
 8. If the bot has gone quiet, diagnose it read-only: bot logs, dashboard issue, config errors, rate limits, token expiry.
 
@@ -119,15 +121,15 @@ For a version upgrade of a cluster, platform component, managed service, hypervi
 
 Owner line: you own the path back. Upgrade one unit, prove it, then the next.
 
-1. Preflight from release notes: breaking changes, version skew rules, deprecated APIs, required intermediate versions. No skipping minor versions where the project forbids it.
-2. Check for deprecated APIs in live manifests when upgrading Kubernetes.
-3. Backups taken and verified for anything stateful in scope (see `restore-drill` for what "verified" means).
-4. Write the rollback before starting, with how long it takes.
-5. Pre-production or canary first: a non-prod environment, one node, one instance.
-6. **Gate** per unit. Between units, health checks must pass: nodes Ready, workloads healthy, storage replicas rebuilt, error rates and latency back to baseline.
-7. For node-by-node upgrades: cordon, drain with PDBs respected, upgrade, uncordon, wait for storage rebuild, next.
-8. For managed services: provider maintenance window, provider backup, then upgrade.
-9. When another agent owns the target environment, emit a handoff prompt for that agent instead of acting.
+1. When another agent owns the target environment, emit a handoff prompt for that agent instead of acting.
+2. Preflight from release notes: breaking changes, version skew rules, deprecated APIs, required intermediate versions. No skipping minor versions where the project forbids it.
+3. Check for deprecated APIs in live manifests when upgrading Kubernetes.
+4. Backups taken and verified for anything stateful in scope (see `restore-drill` for what "verified" means).
+5. Write the rollback before starting, with how long it takes.
+6. Pre-production or canary first: a non-prod environment, one node, one instance.
+7. **Gate** per unit. Between units, health checks must pass: nodes Ready, workloads healthy, storage replicas rebuilt, error rates and latency back to baseline.
+8. For node-by-node upgrades: cordon, drain with PDBs respected, upgrade, uncordon, wait for storage rebuild, next.
+9. For managed services: provider maintenance window, provider backup, then upgrade.
 
 Calls: **kubernetes**, **virtualization**, **databases**, **backend-api**, the matching OS skill.
 Principles: reversible-first, prove-the-restore, sequence-verifiable-units.
@@ -141,7 +143,7 @@ Owner line: you own the merge frontier and the stop line.
 
 1. Record the stop line the operator gave ("merge all, stop before apply", "stop at the first red plan").
 2. List the queue with dependencies and order. Find which merges deploy and which need a manual apply after.
-3. Per item, in order: rebase if needed, check CI, review threads resolved, merge with a short squash message.
+3. Per item, in order: rebase if needed, check CI, review threads resolved, merge with a short squash message. **Gate** first when the merge deploys.
 4. After each merge that needs an apply: re-plan (the previous apply makes older plans stale), summarize, **Gate** or predicate grant.
 5. Clean up after each item: delete merged branches, update the queue.
 6. Stop at the stop line or the first item that fails a gate.
@@ -179,7 +181,7 @@ Owner line: "unused" is a hypothesis. Prove it before anything goes dark.
 3. **Gate:** reversible step first (scale to zero through git, power off, rename with an `OFF-` prefix, disable the DNS name).
 4. Soak period agreed with the operator. Watch for breakage.
 5. **Gate:** teardown, with a final backup if any data is kept.
-6. Remove every reference: monitoring targets, alerts, backups jobs, DNS, firewall rules, secrets, docs, inventory.
+6. **Gate** per location: remove every reference. Monitoring targets, alerts, docs, and inventory first, DNS and firewall rules through `edge-change`, backup jobs and secrets last.
 
 Calls: **virtualization**, **kubernetes**, **networking**.
 Principles: reversible-first, prove-the-restore.
@@ -192,10 +194,10 @@ For rotating a credential, key, token, or certificate, and for responding to a l
 Owner line: you own every consumer. Rotation ends when the old value no longer works and nothing breaks.
 
 1. Inventory consumers: which services, CI pipelines, IaC providers, and people use the secret. Where it is stored (sealed secret, SOPS file, vault, CI variable, cloud secret manager).
-2. For a leak: revoke or rotate at the provider first, then check provider logs for use during the exposure window. Do not rewrite published git history; fix forward and rotate.
-3. Create the new value at the source. Never print it, never pass it on a command line.
-4. Update the store, then roll consumers. For sealed secrets, re-seal with the current key.
-5. **Gate** for revoking the old value.
+2. For a leak: **Gate** to revoke or rotate at the provider first, with the consumers that break until they have the new value in its blast radius. Then check provider logs for use during the exposure window. Do not rewrite published git history; fix forward and rotate.
+3. **Gate:** create the new value at the source. Never print it, never pass it on a command line.
+4. **Gate:** update the store, then roll consumers. For sealed secrets, re-seal with the current key.
+5. **Gate** for revoking the old value, unless step 2 already did.
 6. Verify: every consumer works with the new value, the old value is rejected, provider logs show no use of the old value after the switch.
 7. Add a scanning rule if the leak pattern was not caught.
 
@@ -233,7 +235,7 @@ Owner line: you own the timeline. Mitigate first, root-cause second.
 1. Declare: impact in user terms, severity from impact, start time.
 2. Run `live-diagnosis` for the cause, in parallel with mitigation.
 3. **Gate** each mitigation. After it, hold the symptom query below threshold for an agreed period before calling it mitigated.
-4. Drafts, never sent by the agent: a technical update, a short non-technical summary, and an external message for customers or vendors when needed. Numbers over adjectives. Do not overstate what was done or verified. Have a second model check external drafts before the operator sends them.
+4. Drafts, never sent by the agent: a technical update, a short non-technical summary, and an external message for customers or vendors when needed. Numbers over adjectives. Do not overstate what was done or verified. Have a second model check external drafts before the operator sends them. Sending any message is a **Gate** on the final text and the recipients.
 5. Postmortem when it meets the trigger (user-visible downtime, data loss, manual intervention, monitoring missed it): impact, timeline, contributing causes, what went well, action items.
 6. Every action item becomes a tracked issue with an owner.
 
@@ -269,7 +271,7 @@ For finding where reality differs from code: IaC state, host config, GitOps apps
 Owner line: you own the list. Report drift; do not fix it here.
 
 1. Terraform and OpenTofu: `plan -detailed-exitcode` per state, read-only. Exit code 2 is drift; summarize it.
-2. Ansible: `--check --diff` per inventory group.
+2. Ansible: `--check --diff` per inventory group. A task that sets `check_mode: false` runs for real under `--check`: search for it first, and stop at a **Gate** before that run.
 3. GitOps: apps OutOfSync, apps whose synced revision is behind HEAD, resources with ignored differences, resources created outside git.
 4. UI edits: dashboards and alert rules edited in the UI versus their code, cluster settings changed by hand.
 5. Classify each drift: intended but not codified, accidental, or dangerous.
@@ -303,7 +305,7 @@ For a periodic security check of clusters, hosts, CI, secrets, and the external 
 
 Owner line: you own what is new since last time.
 
-1. Cluster: CIS benchmark (kube-bench with the distro's profile), Kubescape, namespaces without Pod Security enforcement, RBAC review (cluster-admin bindings, wildcard verbs, who can read secrets), namespaces without NetworkPolicy, admission policy state.
+1. Cluster: CIS benchmark (kube-bench with the distro's profile), Kubescape, namespaces without Pod Security enforcement, RBAC review (cluster-admin bindings, wildcard verbs, who can read secrets), namespaces without NetworkPolicy, admission policy state. Running kube-bench as an in-cluster Job creates a privileged workload: that is a **Gate**, and the Job is removed after.
 2. Hosts: SSH config (`sshd -T`), Lynis, pending security updates, firewall rule review.
 3. CI and supply chain: actions pinned by SHA, workflow audit (zizmor for GitHub Actions), token permissions, image signatures verified, SBOMs present.
 4. Secrets: scan repos (gitleaks or trufflehog), secret store key backups, controller versions with known issues.
@@ -324,9 +326,9 @@ Owner line: you own the proof that the vulnerable version is gone from what runs
 
 1. Find every place the component runs: image SBOMs, chart renders, host package lists.
 2. Prioritize: listed in CISA KEV, EPSS score, internet-facing or not, reachable or not, vendor fix available.
-3. Patch through `dependency-bump` or `upgrade`.
+3. Open a tracked issue per exposed location group, then patch through `dependency-bump` or `upgrade`.
 4. Verify: rescan the new artifact, confirm running pods use the new digest, confirm host package versions.
-5. If no fix exists: mitigation (disable the feature, restrict exposure) as a gate, and an issue with a review date.
+5. If no fix exists: a mitigation (disable the feature, restrict exposure) through the matching change playbook, at its gate, and an issue with a review date.
 
 Calls: **security-audit**, **docker**, **kubernetes**.
 Principles: prove-it-works.
@@ -394,11 +396,11 @@ Owner line: you own leaving nothing ambiguous.
 1. Everything intended is committed and pushed. Nothing intended is only local.
 2. PR and MR states: merged, open with reason, or abandoned.
 3. Gates still held and what each needs.
-4. Branch and worktree sweep, local and remote: list merged or abandoned ones, delete only after the operator confirms.
+4. Branch and worktree sweep, local and remote: list merged or abandoned ones. Deleting any of them is a **Gate**, passed only when the operator confirms the exact list.
 5. Lessons: repo-specific lessons go to the repo's agent instructions (tracked or local-only, by sensitivity), cross-project facts to the operator's memory store if one is configured.
 6. A short "what's left" list.
 
-Overlay relation: uses pstack's `worktree-cleanup` for the sweep.
+Overlay relation: uses pstack's `worktree-cleanup` for the deletion.
 Reply: the what's-left list first, then the state lines.
 
 ## Overlays
@@ -406,8 +408,8 @@ Reply: the what's-left list first, then the state lines.
 Each overlay starts by reading the shared pstack playbook, then applies these gates. idstack gates win on conflict.
 
 - **bug-fix:** for infra defects, "reproduce" means observing the defect in live state with read-only commands or a fixture. The fix is delivered through the matching change playbook with its gates. Keep the failing check first in the commit order when one exists.
-- **babysit:** works with `gh` or `glab`. A merge that deploys is a gate. CI retriggers are classified first (flake, infra, real) and limited to one fresh run.
-- **shipping:** when merges deploy, landing a stack is a series of gated writes, one per PR, with verification between each.
-- **opening-a-pr:** the repo's conventions win over pstack's PR body format. Conventional commit titles. Reference the tracking issue. No AI attribution lines. Before pushing to a public repo, check the diff and the PR text for private hostnames, IPs, internal URLs, and secrets.
-- **autonomous-run:** the exit predicate must include a stop line before any state-mutating step not covered by a grant. Reaching the stop line is a successful stop, not a dead end.
-- **pause-safely:** the checkpoint records pinned targets, held gates, saved plan files and their staleness, and any partly applied change.
+- **babysit:** works with `gh` or `glab`. A merge that deploys is a gate. CI failures are classified first (flake, infra, real); only a flake or infra failure is retriggered, at most once per failure, and retriggering a run that holds an apply, deploy, sync, or publish job is a gate.
+- **shipping:** when merges deploy, landing a stack is a series of gated writes, one per merge and never one approval for the stack, with verification between each.
+- **opening-a-pr:** the repo's conventions win over pstack's PR body format. Conventional commit titles. Reference the tracking issue. No AI attribution lines. Before any push, check the diff and the PR text for secrets. Before pushing to a public repo, also check them for private hostnames, IPs, and internal URLs. Opening a PR is a gate when the repo builds preview environments or applies on push or PR.
+- **autonomous-run:** the exit predicate must include a stop line before any state-mutating step, except one a predicate grant covers and whose check passes. Reaching the stop line is a successful stop, not a dead end.
+- **pause-safely:** the checkpoint records pinned targets, held gates, saved plan files and their staleness, and any partly applied change. An answered gate and a grant do not carry over: a resumed session asks again.
