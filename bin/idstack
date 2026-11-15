@@ -571,13 +571,15 @@ def cmd_doctor(a) -> int:
     if g["mode"] == "off":
         add("guard", "ok", "mode off (opt-in; enable with `idstack guard enable`)")
     else:
-        # Claude Code runs the plugin's own hook; Codex and OpenCode need `guard install`.
+        # Claude Code and Codex run the plugin's own hook; without the plugin, Codex and OpenCode need `guard install`.
         unguarded = [h for h in ("codex", "opencode") if h in harnesses and not guard_installed(h)]
+        twice = "codex" in harnesses and guard_in_config("codex") and codex_plugin_hook() is not None
         add(
             "guard",
-            "warn" if unguarded else "ok",
+            "warn" if unguarded or twice else "ok",
             f"mode {g['mode']}"
-            + "".join(f"; not installed for {h}: run `idstack guard install --harness {h}`" for h in unguarded),
+            + "".join(f"; not installed for {h}: run `idstack guard install --harness {h}`" for h in unguarded)
+            + ("; two guard hooks for codex: run `idstack guard install --harness codex` to drop one" if twice else ""),
         )
     if a.live:
         if shutil.which("kubectl"):
@@ -1082,28 +1084,63 @@ def guard_config_file(harness: str) -> Path:
     return opencode_dir() / "opencode.json"
 
 
-def guard_installed(harness: str) -> bool:
+def guard_in_config(harness: str) -> bool:
     paths = [guard_config_file(harness)] + ([opencode_dir() / "opencode.jsonc"] if harness == "opencode" else [])
     mark = "idstack guard hook" if harness == "codex" else "harness/opencode/guard"
     return any(p.is_file() and mark in p.read_text() for p in paths)
 
 
+def codex_plugin_hook() -> Path | None:
+    """The guard hook file an installed, enabled idstack Codex plugin loads, if it ships one."""
+    home = Path(os.environ.get("CODEX_HOME", HOME / ".codex"))
+    try:
+        config = tomllib.loads((home / "config.toml").read_text())
+    except (OSError, ValueError):
+        config = {}
+    if (config.get("plugins") or {}).get("idstack@idstack", {}).get("enabled") is False:
+        return None
+    for manifest in sorted(home.glob("plugins/cache/idstack/idstack/*/.codex-plugin/plugin.json")):
+        try:
+            hooks = json.loads(manifest.read_text())["hooks"]
+        except (OSError, ValueError, KeyError, TypeError):
+            continue
+        for rel in [hooks] if isinstance(hooks, str) else hooks if isinstance(hooks, list) else []:
+            file = manifest.parent.parent / rel if isinstance(rel, str) else None
+            if file and file.is_file() and "guard hook --harness codex" in file.read_text():
+                return file
+    return None
+
+
+def guard_installed(harness: str) -> bool:
+    return guard_in_config(harness) or (harness == "codex" and codex_plugin_hook() is not None)
+
+
 def guard_install(a) -> int:
     link = HOME / ".local/bin/idstack"
     exe = str(link if link.exists() else ROOT / "bin/idstack")
+    plugin = None
     if a.harness == "codex":
         path = guard_config_file("codex")
         doc = json.loads(path.read_text()) if path.is_file() else {}
         pre = doc.setdefault("hooks", {}).setdefault("PreToolUse", [])
         ours = [g for g in pre if any("idstack guard hook" in h.get("command", "") for h in g.get("hooks", []))]
-        changed = bool(ours) if a.uninstall else not ours
-        for g in ours if a.uninstall else []:
+        plugin = codex_plugin_hook()
+        # Codex runs every matching hook, so an entry here next to the plugin's would run the guard twice.
+        drop = a.uninstall or plugin is not None
+        changed = bool(ours) if drop else not ours
+        for g in ours if drop else []:
             pre.remove(g)
-        if not a.uninstall and not ours:
+        if not drop and not ours:
             pre.append(
                 {
                     "matcher": "Bash",
-                    "hooks": [{"type": "command", "command": f"{shlex.quote(exe)} guard hook --harness codex"}],
+                    "hooks": [
+                        {
+                            "type": "command",
+                            "command": f"{shlex.quote(exe)} guard hook --harness codex",
+                            "statusMessage": "idstack guard",
+                        }
+                    ],
                 }
             )
         note = "open Codex and trust the hook with /hooks before it runs"
@@ -1132,12 +1169,18 @@ def guard_install(a) -> int:
     else:
         return fail(a, "cannot install the guard for Claude Code: its plugin loads the hooks itself", EXIT_USAGE)
     result = {"harness": a.harness, "path": str(path), "uninstall": a.uninstall}
+    same = f"nothing to remove from {path}" if a.uninstall else f"already in {path}"
+    wrote = f"removed from {path}" if a.uninstall else f"wrote {path}; {note}"
+    if a.harness == "codex":
+        result["plugin_hook"] = str(plugin) if plugin else None
+    if plugin and a.uninstall:
+        left = f"; the idstack Codex plugin still loads its guard hook ({plugin}): turn it off in /hooks"
+        same, wrote = same + left, wrote + left
+    elif plugin:
+        same = f"the idstack Codex plugin loads the guard hook ({plugin}); {note}"
+        wrote = f"removed the duplicate entry from {path}: {same}"
     if not changed:
-        emit(
-            {**result, "changed": False},
-            a.json,
-            f"nothing to remove from {path}" if a.uninstall else f"already in {path}",
-        )
+        emit({**result, "changed": False}, a.json, same)
         return EXIT_OK
     if a.dry_run:
         emit({**result, "changed": True, "dry_run": True, "config": doc}, a.json, json.dumps(doc, indent=2))
@@ -1146,11 +1189,7 @@ def guard_install(a) -> int:
         shutil.copy2(path, path.with_suffix(f".json.idstack-{time.strftime('%Y%m%dT%H%M%S')}.bak"))
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(doc, indent=2) + "\n")
-    emit(
-        {**result, "changed": True, "dry_run": False},
-        a.json,
-        f"removed from {path}" if a.uninstall else f"wrote {path}; {note}",
-    )
+    emit({**result, "changed": True, "dry_run": False}, a.json, wrote)
     return EXIT_OK
 
 

@@ -29,8 +29,7 @@ CLAUDE_HOOKS = {
 
 
 def codex_hook_file() -> Path:
-    rel = json.loads((ROOT / "plugin.json").read_text())["extensions"]["com.openai"]["hooks"]
-    return ROOT / rel
+    return ROOT / json.loads((ROOT / ".codex-plugin/plugin.json").read_text())["hooks"]
 
 
 def handlers(path: Path) -> list[dict]:
@@ -67,10 +66,9 @@ class CodexHookTest(unittest.TestCase):
     def add_plugin(self, codex_hook: bool = True) -> None:
         dest = self.codex / "plugins/cache/idstack/idstack/9.9.9"
         shutil.copytree(ROOT / "hooks", dest / "hooks")
-        manifest = json.loads((ROOT / "plugin.json").read_text())
-        if not codex_hook:
-            manifest["extensions"]["com.openai"].pop("hooks", None)
-        (dest / "plugin.json").write_text(json.dumps(manifest))
+        shutil.copy(ROOT / "plugin.json", dest / "plugin.json")
+        if codex_hook:
+            shutil.copytree(ROOT / ".codex-plugin", dest / ".codex-plugin")
 
     def user_entries(self) -> list[dict]:
         path = self.codex / "hooks.json"
@@ -89,6 +87,14 @@ class CodexHookTest(unittest.TestCase):
         self.assertIn("PLUGIN_ROOT", hook["command"])
         self.assertTrue(hook.get("statusMessage", "").strip())
         self.assertEqual(json.loads((ROOT / "hooks/hooks.json").read_text()), CLAUDE_HOOKS)
+
+    def test_codex_manifest_matches_the_root_manifest(self):
+        root = json.loads((ROOT / "plugin.json").read_text())
+        codex = json.loads((ROOT / ".codex-plugin/plugin.json").read_text())
+        for key in ("name", "version", "description"):
+            with self.subTest(key):
+                self.assertEqual(codex[key], root[key])
+        self.assertEqual(codex["interface"], root["extensions"]["com.openai"]["interface"])
 
     def test_hook_commands_answer_for_their_harness(self):
         self.cli("guard", "enable", "--mode", "ask")

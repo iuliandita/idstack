@@ -97,6 +97,14 @@ idstack guard install --harness opencode   # adds the plugin to ~/.config/openco
 idstack guard test kubectl delete pod x    # prints the match, runs nothing
 ```
 
+On Codex the plugin loads the guard hook itself, from `hooks/codex.json` (named in
+`.codex-plugin/plugin.json`); `/hooks` lists it as "idstack guard" under the plugin. Trust it there
+after installing and again after each plugin update. With the plugin installed and enabled,
+`guard install --harness codex` writes nothing to `$CODEX_HOME/hooks.json` and removes an entry an
+earlier run left there, so one guard hook runs, not two. Without the plugin it adds the entry as
+before. `guard uninstall --harness codex` removes only that entry; turn the plugin's hook off in
+`/hooks`.
+
 Both install commands back up the file they edit, and `guard uninstall --harness <codex|opencode>`
 removes only idstack's entry. A config written as `opencode.jsonc` is left alone: add
 `{"package": "<clone>/harness/opencode/guard"}` to its `plugins` list by hand.
@@ -285,7 +293,7 @@ older than 4.4, which prints only `ok`, `errors`, and `exit_code`.
 | `idstack guard enable`, `disable` | `mode`, `jev` |
 | `idstack guard status` | `config`, `recent` |
 | `idstack guard allow-once` | `allowed`, `ttl` |
-| `idstack guard install`, `uninstall` | `harness`, `path`, `uninstall`, `changed`, `dry_run` and `config` (with `--dry-run`) |
+| `idstack guard install`, `uninstall` | `harness`, `path`, `uninstall`, `changed`, `dry_run` and `config` (with `--dry-run`), `plugin_hook` (Codex: the plugin's hook file, or null) |
 
 `idstack guard hook` is the harness hook protocol. It reads and writes the harness's own JSON and
 has no `--json` flag. A usage error (an unknown option or battery) also prints
