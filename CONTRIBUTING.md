@@ -22,28 +22,38 @@ public issue.
   `scripts/pstack_watch.py --report` every six hours and keeps one issue open while upstream or
   the mirror differs from the lock. After reconciling the README, overlays, and pin, run
   `python3 scripts/pstack_watch.py --update-lock` and commit the result.
-- `harness/**` and `skills/*/agents/openai.yaml` are generated. After editing `agents/*.md` or a
-  skill, run `python3 bin/idstack build` and commit the result; never edit the generated files.
+- The Codex and OpenCode agent files (`harness/codex/agents/*.toml`, `harness/opencode/agents/*.md`)
+  and `skills/*/agents/openai.yaml` are generated. After editing `agents/*.md` or a skill, run
+  `python3 bin/idstack build` and commit the result; never edit the generated files.
+  `harness/opencode/guard/server.js`, the OpenCode guard plugin, is hand-written.
 
 ## Checks and documentation
 
 ```sh
 python3 scripts/check.py
 python3 .github/stack/stack-check.py
-python3 -m unittest discover -s tests
+python3 -m unittest discover -s tests -v
 python3 bin/idstack build --check
 ruff check bin/idstack scripts tests
 ruff format --check bin/idstack scripts tests
 shellcheck install.sh
 actionlint
+node --check harness/opencode/guard/server.js
 claude plugin validate .
-markdownlint-cli2
-lychee --config lychee.toml --extensions md *.md agents docs skills src
+npm ci --prefix .github/tools/markdownlint --ignore-scripts --no-audit --no-fund
+npx --prefix .github/tools/markdownlint markdownlint-cli2
+lychee --config lychee.toml AGENTS.md CHANGELOG.md CONTRIBUTING.md INSTALL.md README.md SECURITY.md $(find .github agents docs skills src -type f -name '*.md' -not -path '*/node_modules/*')
 ```
 
-Run these before opening a PR. `.github/stack/stack-check.py` checks the shared stack conventions;
-see [.github/stack/README.md](.github/stack/README.md). `scripts/check.py` checks ASCII, JSON, manifest agreement, the mirror pin, the changelog, and
-relative links. If `private-patterns.txt` exists (it is gitignored; copy
+Run these before opening a PR; the list is the same as AGENTS.md and CI. `npm ci` puts the pinned
+`markdownlint-cli2` in `.github/tools/markdownlint/node_modules`, which is git-ignored, so the
+checks that list files through git skip it. `actionlint`, `lychee`, `node`, `ruff`, `shellcheck`,
+and `claude` must be on PATH; CI pins shellcheck 0.11.0, so use that version if results differ.
+CI also runs the repo check, the tests, and the build check on Python 3.11 and the newest release.
+`.github/stack/stack-check.py` checks the shared stack conventions; see
+[.github/stack/README.md](.github/stack/README.md). `scripts/check.py` checks ASCII, JSON, manifest
+agreement, the changelog, the pstack lock and mirror pin, skill and agent names, the router catalog,
+and relative links. If `private-patterns.txt` exists (it is gitignored; copy
 `private-patterns.example.txt`), it also fails on any listed literal in a tracked file.
 
 For installer changes, run it against a throwaway directory so nothing touches your real config:
@@ -52,11 +62,14 @@ For installer changes, run it against a throwaway directory so nothing touches y
 R=$(mktemp -d)
 export CLAUDE_CONFIG_DIR=$R/claude CODEX_HOME=$R/codex AGENTS_SKILLS_DIR=$R/agents/skills \
   OPENCODE_SKILLS_DIR=$R/opencode/skills OPENCODE_AGENTS_DIR=$R/opencode/agents \
-  IDSTACK_CACHE_DIR=$R/cache IDSTACK_BIN_DIR=$R/bin
+  IDSTACK_CACHE_DIR=$R/cache IDSTACK_BIN_DIR=$R/bin IDSTACK_CONFIG_DIR=$R/idstack-config
 mkdir -p "$CODEX_HOME"
 ./install.sh --harness claude,codex,opencode --source "$PWD"
 ./install.sh --harness claude,codex,opencode --source "$PWD" --check
 ```
+
+`IDSTACK_CONFIG_DIR` keeps your own `models.json` out of the run. Leave any of these unset and the
+script writes to the real location.
 
 Update [INSTALL.md](INSTALL.md) and [CHANGELOG.md](CHANGELOG.md) in the same PR when behavior
 changes.
