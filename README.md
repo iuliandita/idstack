@@ -10,7 +10,9 @@ your permissions, so changes to live state stop at a gate.
 
 Status: stable since v1.0.0. `main` is the stable channel and `develop` the nightly. The router,
 playbooks, principles, subagents, `idstack` CLI, opt-in guard, and setup skill ship on Claude Code,
-Codex, and OpenCode. See the [roadmap](docs/plan.md#15-roadmap).
+Codex, and OpenCode. The Phase 6 exit criteria (a user guide, each playbook reviewed against real
+use, two weeks of daily use without a gate bypass) are still open in [#26](https://github.com/iuliandita/idstack/issues/26).
+See the [roadmap](docs/plan.md#15-roadmap).
 
 ## Install
 
