@@ -1,6 +1,6 @@
 # idstack plan
 
-Status: design record, written 2026-10-27. For what has shipped (1.0.0 at time of writing), see the status line in [section 15](#15-roadmap) and [CHANGELOG.md](../CHANGELOG.md).
+Status: design record, written 2026-10-27. For what has shipped, see the status line in [section 15](#15-roadmap) and [CHANGELOG.md](../CHANGELOG.md).
 
 This document is the design and roadmap. The per-playbook specs live in [playbooks.md](playbooks.md).
 
@@ -104,8 +104,8 @@ This is the core of idstack. Every action falls into one of three classes.
 | Class | Examples | Rule |
 | --- | --- | --- |
 | Read | `get`, `describe`, `logs`, `plan`, `diff`, `template`, `--check`, PromQL, `dig`, `openssl s_client`, scans of your own assets | Free. Bounded (time ranges, `--tail`, limits). Never read Secret values. |
-| Reversible write | branch, commit, PR or MR, local render, scratch namespace restore, draft message, issue | Free, unless it triggers a deploy (see below). |
-| State-mutating | `apply`, `destroy`, state surgery, `sync` to a shared env, `delete`, `scale`, `drain`, `rollout restart`, `helm upgrade`, Ansible without `--check`, firewall rule change, DNS record change, secret rotation, reboot, `qm destroy`, sending an external message, merging where merge triggers a deploy | Always gated. |
+| Reversible write | branch, commit, PR or MR, local render, draft message, issue | Free, unless it triggers a deploy (see below). |
+| State-mutating | `apply`, `destroy`, state surgery, `sync` to a shared env, `delete`, `scale`, `drain`, `rollout restart`, `helm upgrade`, a restore (even into a scratch namespace), Ansible without `--check`, firewall rule change, DNS record change, secret rotation, reboot, `qm destroy`, sending an external message, merging where merge triggers a deploy | Always gated. |
 
 **Git operations can be writes.** Actions are classed by their downstream effect. A push, PR, merge, or workflow dispatch that triggers automation able to deploy or change infrastructure (CI applies Ansible on push, preview environments on PR, ArgoCD auto-sync on merge) is state-mutating, because that automation runs with its own credentials and the agent's read-only credentials do not stop it. Every change playbook's first step finds out which git events deploy in the target repo and records it.
 
@@ -191,10 +191,10 @@ The full spec for each playbook is in [playbooks.md](playbooks.md). This is the 
 | Overlay | Infra delta |
 | --- | --- |
 | `bug-fix` | Reproduce means observe the defect in live state read-only; the fix goes through the matching change playbook. |
-| `babysit` | Forge-agnostic: `gh` or `glab`. A merge that deploys is a gate. |
-| `shipping` | Landing a stack where merges deploy is a sequence of gated writes, one per PR. |
-| `opening-a-pr` | Repo conventions win: conventional commits, issue references (`Closes #NN`), no AI attribution, short squash messages, public-repo hygiene check before push. |
-| `autonomous-run` | The exit predicate must include a stop line before any state-mutating step not covered by a grant. |
+| `babysit` | Forge-agnostic: `gh` or `glab`. A merge that deploys is a gate, and so is retriggering a run that holds an apply, deploy, sync, or publish job. |
+| `shipping` | Landing a stack where merges deploy is a sequence of gated writes, one per merge. |
+| `opening-a-pr` | Repo conventions win: conventional commits, issue references (`Closes #NN`), no AI attribution, short squash messages, a secret check before any push, and a public-repo hygiene check. |
+| `autonomous-run` | The exit predicate must include a stop line before any state-mutating step, except one a predicate grant covers and whose check passes. |
 | `pause-safely` | Record pinned targets, held gates, and any half-applied state. |
 
 ### Kept from pstack unchanged
@@ -240,11 +240,11 @@ A cross-harness worker gets a self-contained brief (scope, target, read-only com
 
 Prose rules are not enough. idstack ships an optional guard hook.
 
-**What it does.** A pre-tool-use hook inspects shell commands. If a command matches a state-mutating pattern (section 4) for a known infra CLI, the hook returns "ask" with a one-line reason, so the harness shows its own permission prompt. Without a match, the hook does nothing.
+**What it does.** A pre-tool-use hook inspects shell commands. It does nothing until the operator runs `idstack guard enable --mode <log|ask>`. If a command matches a state-mutating pattern (section 4) for a known infra CLI, `log` mode records it and lets it run, and `ask` mode returns "ask" with a one-line reason, so the harness shows its own permission prompt (Codex and OpenCode cannot ask, so there it blocks; see below). Without a match, the hook does nothing.
 
 **Patterns.** One list for every harness lives in [src/guard/patterns.toml](../src/guard/patterns.toml): Terraform and OpenTofu, kubectl, Helm, ArgoCD, Flux, Ansible, Velero, Proxmox, libvirt, cloud CLIs, and remote `systemctl` and reboot. `idstack guard test <command>` shows what a command matches.
 
-**Limits, stated plainly.** Shell parsing is best-effort. Aliases, scripts, and `bash -c` strings can hide a verb. The hook is a seatbelt, not a lock. The real lock is credentials: give agents a read-only kubeconfig context, a read-only cloud token, and a plan-only Terraform role. `idstack doctor --live` reports whether the current kube context can write; checking cloud credentials, and setup guidance for read-only credentials, are not shipped.
+**Limits, stated plainly.** Shell parsing is best-effort. Aliases, scripts, and quoting can hide a verb. The hook is a seatbelt, not a lock. The real lock is credentials: give agents a read-only kubeconfig context, a read-only cloud token, and a plan-only Terraform role. `idstack doctor --live` reports whether the current kube context can write; checking cloud credentials, and setup guidance for read-only credentials, are not shipped.
 
 **Coexistence.** Some users already run their own guard. The guard is opt-in and off by default, so it never stacks on another guard unless the operator turns it on. Detecting existing pre-tool-use hooks is not shipped.
 
@@ -297,7 +297,7 @@ Many idstack steps need a small common-sense judgment over text: does this relea
 - Install:
   ```
   /plugin marketplace add cursor/plugins
-  /plugin marketplace add iuliandita/idstack
+  /plugin marketplace add iuliandita/idstack#main
   /plugin install idstack@idstack
   ```
 - Skills are namespaced: `/idstack:id-mode`. Persistent state goes in `${CLAUDE_PLUGIN_DATA}`, never in the plugin root, which changes on every update.
@@ -339,22 +339,29 @@ idstack/
   agents/*.md                          subagent sources (Claude Code reads them directly)
   hooks/hooks.json                     guard hook (Claude Code)
   bin/idstack                          CLI
-  config/pstack-models.json            pstack model per role, written by install.sh
-  scripts/                             check.py, eval.py, pstack_models.py
+  config/
+    pstack-models.json                 pstack model per role, written by install.sh
+    pstack-lock.json                   pstack version, mirror pin, and file hashes last reconciled with
+  scripts/                             check.py, eval.py, pstack_models.py, pstack_watch.py
   src/
     guard/patterns.toml                one pattern list for every harness
     questions/<battery>.json           Jev question wording, criteria, thresholds, model pin
-  harness/                             generated by `idstack build`
-    codex/agents/*.toml
-    opencode/agents/*.md
+  harness/
+    codex/agents/*.toml                generated by `idstack build`
+    opencode/agents/*.md               generated by `idstack build`
+    opencode/guard/                    OpenCode guard plugin, hand-written
   fixtures/
     infra/                             toy estate for behavioral evals
     evals/scenarios.json               eval scenarios
     plans/                             plan JSON for plan-summary tests
     jev/<battery>/                     labeled cases per Jev decision point
-  tests/                               CLI unit tests
+  tests/                               unit tests: CLI, installer, evals, pstack watch
   docs/                                plan, playbook specs, Jev calibration
-  README.md, INSTALL.md, CONTRIBUTING.md, SECURITY.md, CHANGELOG.md, LICENSE
+  .github/
+    workflows/                         ci, security, release, pstack-watch, stack-sync
+    stack/                             shared stack conventions and their checker, vendored
+    tools/                             pinned markdownlint and harness CLI versions for CI
+  README.md, INSTALL.md, CONTRIBUTING.md, SECURITY.md, CHANGELOG.md, AGENTS.md, LICENSE
 ```
 
 ## 12. The `idstack` CLI
@@ -363,18 +370,18 @@ A single-file Python 3 CLI with only the standard library, shipped in `bin/`. Ev
 
 | Command | Does |
 | --- | --- |
-| `idstack doctor` | Checks which harnesses are on PATH, that pstack and idstack are installed for each, the Codex and OpenCode agents and skills, missing domain skills, infra CLIs on PATH, the pstack model files, whether `TYPESAFE_API_KEY` is set, and the guard mode. With `--live`, it runs `kubectl auth can-i` against the current kube context to report whether it can write. Exit code is non-zero on a hard requirement failure. |
-| `idstack check` | Runs `scripts/check.py`: ASCII, JSON, manifest agreement, the mirror pin, the changelog, and relative links. Used in CI. |
+| `idstack doctor` | Checks which harnesses are on PATH, that pstack and idstack are installed for each, the Codex and OpenCode agents and skills, OpenCode skill permissions, missing domain skills, infra CLIs on PATH, the pstack model files, whether `TYPESAFE_API_KEY` is set, and the guard mode. With `--live`, it runs `kubectl auth can-i` against the current kube context to report whether it can write. Exit code is non-zero on a hard requirement failure. |
+| `idstack check` | Runs `scripts/check.py`: ASCII, JSON, manifest agreement, the changelog, the pstack lock and mirror pin, skill and agent names, the router catalog against the playbook files, relative links, and private patterns when `private-patterns.txt` exists. Used in CI. |
 | `idstack build` | Regenerates the harness artifacts. `--check` fails if anything changes. |
 | `idstack plan-summary <plan.json>` | Deterministic Terraform plan summary: counts by action, destroys and replaces, addresses outside a given scope, and a pass or fail against a predicate grant. The agent uses this instead of reading raw plan JSON. |
 | `idstack judge <battery> <input.json>` | Runs one Jev decision point (section 9): builds the request from `src/questions/<battery>.json`, applies the code rule, and prints the outcome per item, including unsettled. Exits 4 when `TYPESAFE_API_KEY` is not set and 3 when a call failed. `--trace` writes the exact request and response to the evidence log. |
-| `idstack guard` | The opt-in guard (section 8): `enable`, `disable`, `status`, `test`, `allow-once`, and `install` or `uninstall` for the Codex hook. |
+| `idstack guard` | The opt-in guard (section 8): `enable`, `disable`, `status`, `test`, `allow-once`, `hook` (what the harness calls), and `install` or `uninstall` for the Codex hook and the OpenCode plugin. |
 
 `plan-summary` is the first lever (pstack's `build-the-lever`): predicate grants depend on a mechanical check, not the model's reading of a large JSON file.
 
 ## 13. Testing and evals
 
-**Static, every PR.** `idstack check`, `idstack build --check`, `claude plugin validate .`, shellcheck, actionlint, zizmor, gitleaks, the Python unit tests for the CLI, and an isolated install smoke test.
+**Static, every PR.** `idstack check`, the shared stack check (`.github/stack/stack-check.py`), the Python unit tests, `idstack build --check`, ruff, shellcheck, actionlint, `claude plugin validate .`, `node --check` on the OpenCode guard plugin, markdownlint, lychee link checks, zizmor, gitleaks, and an isolated install smoke test. The repo check, the unit tests, and the build check also run on Python 3.11 and the newest release.
 
 **Fixture repo.** `fixtures/infra/` holds a small estate that runs with no cloud and no cluster:
 
@@ -397,29 +404,29 @@ Eval runs cost tokens, so they do not run per PR. pstack's `eval` playbook is th
 ## 14. Release and versioning
 
 - Default branch `develop`, release branch `main`. Every change lands by PR, squash merge.
-- `v0.x.y` while pre-1.0, cut from `develop`. `v1.0.0` and later are cut from `main`. v1.0.0 was cut on the operator's call before the Phase 6 exit criteria were met; those stay open in the roadmap.
+- `v0.x.y` while pre-1.0, cut from `develop`. `v1.0.0` and later are cut from `main`. v1.0.0 was cut on the operator's call before the Phase 6 exit criteria were met; those stay open in [issue #26](https://github.com/iuliandita/idstack/issues/26).
 - A release merges `develop` into `main` with a merge commit (never a squash, so the branches share history), then tags `main`.
 - Channels: `main` is stable and is what `install.sh` and the documented install commands use. `develop`, the default branch, is the nightly; `install.sh --ref develop` or `iuliandita/idstack#develop` follows it.
 - Every release bumps `version` in all manifests (CI checks they match) and creates a tag `v<version>`, which triggers the release workflow.
 - `CHANGELOG.md` from Phase 1.
-- Track pstack. A scheduled CI job installs the latest pstack and runs the requirements check and static evals, so a pstack rename (a playbook file, a principle, `setup-pstack`) shows up as a failing job, not a user report.
+- Track pstack. The `pstack-watch` workflow runs `scripts/pstack_watch.py` every six hours and keeps one issue open while upstream pstack or the mirror differs from `config/pstack-lock.json`, so a pstack rename (a playbook file, a principle, `setup-pstack`) shows up as an open issue, not a user report. Not shipped: a job that installs the latest pstack and runs the requirements check and static evals against it.
 
 ## 15. Roadmap
 
 Each phase ends with a verifiable exit check.
 
-Status at v1.0.0: the artifacts of phases 1 through 5 ship (router, playbooks, principles, subagents, CLI, batteries with calibration in [jev-calibration.md](jev-calibration.md), guard for Claude Code, Codex, and OpenCode, build generators, setup skill, Codex and OpenCode files). Not shipped from phase 5: model detection in `/idstack:setup`, the `idstack-models.md` roles, and data boundaries. The dogfooding exits (real tasks, a real incident or game-day, an assurance pass on a small cluster), the nightly evals, and the pstack-tracking job are still open.
+Status: the artifacts of phases 1 through 5 ship (router, playbooks, principles, subagents, CLI, batteries with calibration in [jev-calibration.md](jev-calibration.md), guard for Claude Code, Codex, and OpenCode, build generators, setup skill, Codex and OpenCode files). Not shipped from phase 5: model detection in `/idstack:setup`, the `idstack-models.md` roles, and data boundaries. The dogfooding exits (real tasks, a real incident or game-day, an assurance pass on a small cluster) and the nightly evals are still open. The pstack-tracking job shipped in 1.1.1 as the `pstack-watch` workflow, which compares upstream with a lock file instead of installing it ([section 14](#14-release-and-versioning)).
 
 **Phase 0: bootstrap.**
 Repo, license, this plan, CI skeleton (actionlint, zizmor, gitleaks, ASCII check), issue templates.
 Exit: CI green on an empty plugin. Plan approved.
 
 **Phase 1: foundation.**
-`id-mode` router and references (`requirements`, `gates`, `evidence`, `skill-map`, `targets`), four principles, `id-agent`, `plan-reader`, Claude Code manifests with the pstack dependency, `idstack check`, `idstack doctor`, `idstack plan-summary`, `opening-a-pr` and `closeout` overlays, fixture repo skeleton.
+`id-mode` router and references (`requirements`, `gates`, `evidence`, `skill-map`, `targets`), four principles, `id-agent`, `plan-reader`, Claude Code manifests with the pstack dependency, `idstack check`, `idstack doctor`, `idstack plan-summary`, the `opening-a-pr` overlay, the `closeout` playbook, fixture repo skeleton.
 Exit: `/plugin install idstack@idstack` pulls pstack and loads cleanly in a fresh Claude Code profile. `doctor` passes. `id-mode` routes an `investigation` request to pstack's playbook unchanged.
 
 **Phase 2: change path, wave 1.**
-`iac-change`, `gitops-change`, `dependency-bump`, `queue-burndown`, `live-diagnosis`, `change-verifier`, guard hook for Claude Code (log-only default), predicate grants. `idstack judge` with the plan-reading, dependency-bump, log-filtering, and suspect-change batteries and their labeled fixtures.
+`iac-change`, `gitops-change`, `dependency-bump`, `queue-burndown`, `live-diagnosis`, `change-verifier`, guard hook for Claude Code (opt-in, off by default), predicate grants. `idstack judge` with the plan-reading, dependency-bump, log-filtering, and suspect-change batteries and their labeled fixtures.
 Exit: each playbook dogfooded on one real task. Fixture evals pass for the gate and grant scenarios. Each Jev battery has at least 30 labeled cases and no false negatives on its held-out set.
 
 **Phase 3: change path, wave 2.**
@@ -436,15 +443,15 @@ Exit: install and a scripted smoke scenario pass on all three harnesses.
 
 **Phase 6: v1.0.**
 A user guide, every playbook out of draft, no open P1 issues, two weeks of daily use without a gate bypass.
-Status: v1.0.0 was cut on the operator's call with no open P1 issues. The user guide, a review of each playbook against real use, and the two weeks of daily use are still open and tracked as an issue.
+Status: v1.0.0 was cut on the operator's call with no open P1 issues. The user guide, a review of each playbook against real use, and the two weeks of daily use are still open, tracked in [issue #26](https://github.com/iuliandita/idstack/issues/26).
 
 ## 16. Risks
 
 | Risk | Mitigation |
 | --- | --- |
-| pstack renames or restructures a file idstack reads | Pin to tested pstack behavior in docs, scheduled tracking job, requirements check fails loudly |
+| pstack renames or restructures a file idstack reads | Pin to tested pstack behavior in docs, `pstack-watch` compares upstream and the mirror with the lock every six hours, requirements check fails loudly |
 | Token cost. pstack's router is large and idstack adds more | Keep `id-mode` short. Load references only when a step needs them. Bulk evidence goes to cheap-tier subagents. Measure tokens per scenario in evals. |
-| Guard gives false confidence | Documented as a seatbelt. `doctor` reports credential write access. Setup pushes read-only credentials. |
+| Guard gives false confidence | Documented as a seatbelt. `doctor --live` reports whether the kube context can write. Setup guidance for read-only credentials is not shipped (section 8). |
 | Grants creep into blanket permission | Grants are predicates checked by `plan-summary`, logged, scoped to one task, and never cover destroy, state surgery, data deletion, or root credentials |
 | Domain skills drift from what playbooks expect | `skill-map.md` names the sections relied on. Missing or changed skill is reported as skipped, not passed. |
 | Private details leak into public files | Pre-push hygiene check in `opening-a-pr` overlay. gitleaks in CI. Playbooks use placeholders only. |
@@ -457,8 +464,8 @@ Status: v1.0.0 was cut on the operator's call with no open P1 issues. The user g
 
 Decided 2026-10-27.
 
-1. **pstack on Codex and OpenCode:** require the community mirror `backnotprop/pstack`, pinned to a tested commit. `doctor` checks the pin. Revisit if upstream ships Codex or OpenCode packaging. Rejected: `michael-denyer/pstack-claude` (narrower), and running without pstack (forks the methodology).
-2. **Guard default:** opt-in. `/idstack:setup` offers it and skips when another pre-tool-use guard is present.
+1. **pstack on Codex and OpenCode:** require the community mirror `backnotprop/pstack`, pinned to a tested commit. `install.sh --check` reports an install that is behind the pin, and `scripts/check.py` holds the pin to `config/pstack-lock.json`. Revisit if upstream ships Codex or OpenCode packaging. Rejected: `michael-denyer/pstack-claude` (narrower), and running without pstack (forks the methodology).
+2. **Guard default:** opt-in. `/idstack:setup` offers it. Skipping when another pre-tool-use guard is present is not shipped (section 8).
 3. **Auto-routing:** slash-only `id-mode`, like pstack. No session-start hint.
 4. **Router name:** `id-mode`, agent `id-agent`.
 5. **Agent apply policy:** the agent may run a gated command after explicit approval in the current turn, or under a predicate grant. Repo instructions can forbid it entirely, and the strictest rule wins.
