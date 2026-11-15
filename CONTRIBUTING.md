@@ -52,11 +52,14 @@ For installer changes, run it against a throwaway directory so nothing touches y
 R=$(mktemp -d)
 export CLAUDE_CONFIG_DIR=$R/claude CODEX_HOME=$R/codex AGENTS_SKILLS_DIR=$R/agents/skills \
   OPENCODE_SKILLS_DIR=$R/opencode/skills OPENCODE_AGENTS_DIR=$R/opencode/agents \
-  IDSTACK_CACHE_DIR=$R/cache IDSTACK_BIN_DIR=$R/bin
+  IDSTACK_CACHE_DIR=$R/cache IDSTACK_BIN_DIR=$R/bin IDSTACK_CONFIG_DIR=$R/idstack-config
 mkdir -p "$CODEX_HOME"
 ./install.sh --harness claude,codex,opencode --source "$PWD"
 ./install.sh --harness claude,codex,opencode --source "$PWD" --check
 ```
+
+`IDSTACK_CONFIG_DIR` keeps your own `models.json` out of the run. Leave any of these unset and the
+script writes to the real location.
 
 Update [INSTALL.md](INSTALL.md) and [CHANGELOG.md](CHANGELOG.md) in the same PR when behavior
 changes.

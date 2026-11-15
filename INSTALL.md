@@ -34,11 +34,11 @@ cd idstack
 | `--harness LIST` | `claude`, `codex`, `opencode`, comma-separated. Default: every harness whose CLI is on PATH. |
 | `--check` | Report what is installed and what is missing. Changes nothing. |
 | `--dry-run` | Print the commands an install would run. Changes nothing. |
-| `--source SRC` | Install idstack from `owner/repo`, a git URL, or a local checkout. Default: `iuliandita/idstack`. |
-| `--ref REF` | Branch or tag for a remote source: `main` (stable, the default), `develop` (nightly), or a tag such as `v1.0.0`. An existing clone is moved to it. |
+| `--source SRC` | Install idstack from `owner/repo`, a git URL, or a local checkout. A checkout is written as a path (`/abs`, `./rel`, `../rel`, or `.`); a path that is not a directory is a usage error. Default: `iuliandita/idstack`. |
+| `--ref REF` | Branch or tag for a remote source: `main` (stable, the default), `develop` (nightly), or a tag such as `v1.0.0`. An existing clone is moved to it; a marketplace that already exists keeps the ref it was added with. |
 | `--force` | Back up and replace skill folders that share a name with a pstack skill, and pstack model files idstack did not write. |
 | `--no-models` | Leave pstack's per-role model files alone. |
-| `--uninstall` | Remove idstack and the model files it wrote. pstack stays. |
+| `--uninstall` | Remove idstack and the model files it wrote. pstack stays. With `--harness`, pieces another harness still uses stay too. |
 
 Running the script twice is safe. Each step checks the current state first and skips what is
 already done. `--check`, `--dry-run`, and `--uninstall` are separate modes: passing more than one
@@ -65,11 +65,15 @@ commit in `PSTACK_MIRROR_REF` at the top of `install.sh`.
 1. Fetches that commit with git and lists its skill folders.
 2. Stops if any of those names already exists in `~/.agents/skills` and was not installed by this
    script. Rerun with `--force` to back the existing folders up and replace them.
-3. Copies the skills into `~/.agents/skills`, which both Codex and OpenCode read, and records the
-   commit and skill names in `~/.agents/skills/.pstack-install.json`.
+3. Copies the skills into a staging folder inside `~/.agents/skills`, which both Codex and OpenCode
+   read, then renames each one into place.
+4. Records the skill names in `~/.agents/skills/.pstack-install.json` before the first rename and
+   adds the commit after the last. A manifest without a commit means the copy did not finish:
+   `--check` reports it as `incomplete` and the next run redoes it.
 
-If `~/.agents/skills/poteto-mode` already exists and the script did not install it, the script
-leaves it alone and reports it as installed outside the script.
+If `~/.agents/skills/poteto-mode` already exists and there is no manifest, the script leaves it
+alone and reports it as installed outside the script. A manifest that lists anything other than a
+plain folder name stops the run before a folder is deleted.
 
 **Codex: idstack.** Adds this repo as the `idstack` marketplace and runs
 `codex plugin add idstack@idstack`. Codex plugins cannot ship subagents, so the script links
@@ -184,9 +188,10 @@ Claude models against the list in the JSON, Codex models and efforts against
 OpenCode models against `opencode models`, and DeepSeek Flash efforts against the list in the JSON. A CLI that is missing or signed out is skipped with a warning.
 
 Each file carries a `managed by idstack` line. The script replaces only files with that line. If
-you ran `/setup-pstack` yourself, it leaves your file alone and reports it; `--force` backs it up
-to `.idstack-backups/` next to the file and replaces it. Delete the marker line to keep your own
-edits, or set overrides as above and rerun `./install.sh`. To run the step on its own:
+you ran `/setup-pstack` yourself, it leaves your file alone and says so; `--check` counts such a
+file as fine. `--force` backs it up to `.idstack-backups/` next to the file and replaces it. Delete
+the marker line to keep your own edits, or set overrides as above and rerun `./install.sh`. To run
+the step on its own:
 
 ```sh
 python3 scripts/pstack_models.py --check
@@ -224,7 +229,11 @@ Every harness: link `bin/idstack` from the clone into a directory on your PATH, 
 
 ## Check, update, and channels
 
-- `./install.sh --check` exits 0 when everything is installed and 1 when something is missing.
+- `./install.sh --check` exits 0 when everything is installed and 1 when something is missing. It
+  also reports a link whose target is gone, an agent or skill in the source that is not linked yet,
+  a pstack skill folder that was deleted, and a CLI link that is not idstack's.
+- `--source` given again with another value moves the clone in `~/.local/share/idstack/src` to it. A
+  harness marketplace is not moved: the script warns and names the command that removes it.
 - `git pull` in your clone, then `./install.sh`, updates idstack on every harness. The pstack mirror
   is reinstalled when the pinned commit changes.
 - Claude Code leaves auto-update off for third-party marketplaces. Turn it on in `/plugin`, on the
@@ -241,9 +250,16 @@ Every harness: link `bin/idstack` from the clone into a directory on your PATH, 
 ./install.sh --uninstall
 ```
 
-This removes idstack, its subagent links, the CLI link, the Codex guard hook if it installed one,
-and the model files it wrote, and leaves pstack in place. Guard settings in `~/.config/idstack` and
-logs in `~/.local/state/idstack` stay; delete them by hand if you want. If a guard hook cannot be
+This removes idstack, its subagent links, the CLI link, the Codex and OpenCode guard hooks if it
+installed them, and the model files it wrote, and leaves pstack in place. Guard settings in
+`~/.config/idstack` and logs in `~/.local/state/idstack` stay; delete them by hand if you want.
+
+With `--harness`, only that harness is removed. The CLI link stays while any other harness still
+has idstack, and `~/.agents/pstack-models.md` stays while Codex or OpenCode does. A harness whose
+CLI is not on PATH still loses its links and model file; the script warns that the plugin itself
+was not touched and prints the command that removes it.
+
+If a guard hook cannot be
 removed (for example it sits in an `opencode.jsonc`, which the CLI does not edit), the script says
 so, keeps the CLI link the hook calls, removes the rest, and exits 1. Remove the entry by hand and
 run it again. To remove pstack too:
@@ -261,6 +277,8 @@ run it again. To remove pstack too:
 - **Claude Code says the pstack dependency was not found.** Add the marketplace with
   `/plugin marketplace add cursor/plugins` and install again.
 - **A partial install.** Run `./install.sh --check` to see what is missing, then `./install.sh` again.
+  A pstack copy that was interrupted shows as `incomplete` and is redone from the start.
+- **A step failed.** The failed command is in `errors` and on stderr, and the exit code is 1.
 
 ## JSON output
 
@@ -272,7 +290,7 @@ older than 4.4, which prints only `ok`, `errors`, and `exit_code`.
 
 | Command | Keys besides `ok` and `errors` |
 | --- | --- |
-| `install.sh` (every mode) | `warnings` (list of strings), `mode` (`install`, `dry-run`, `check`, `uninstall`), `dry_run`, `exit_code`, `source`, `harnesses` (list), `components` (with `--check`: objects with `name`, `state`, `detail`), `commands` (with `--dry-run`: the commands that would run) |
+| `install.sh` (every mode) | `warnings` (list of strings), `mode` (`install`, `dry-run`, `check`, `uninstall`), `dry_run`, `exit_code`, `source`, `harnesses` (list), `components` (with `--check`: objects with `name`, `state`, `detail`, the model files included), `commands` (with `--dry-run`: the commands that would run, and a one-line description of each step the script takes itself) |
 | `idstack check` | none |
 | `idstack build` | `check`, and `stale` (with `--check`) or `wrote` (otherwise): lists of generated files |
 | `idstack doctor` | `checks`: objects with `name`, `status` (`ok`, `warn`, `fail`, `skip`), `detail` |
@@ -302,6 +320,7 @@ has no `--json` flag. A usage error (an unknown option or battery) also prints
 | `IDSTACK_CACHE_DIR` | `~/.local/share/idstack` | The idstack clone OpenCode links and the CLI link point into. |
 | `IDSTACK_BIN_DIR` | `~/.local/bin` | Where the `idstack` CLI is linked. |
 | `OPENCODE_AGENTS_DIR` | `~/.config/opencode/agents` | Where idstack subagents are linked for OpenCode. |
+| `IDSTACK_CONFIG_DIR` | `$XDG_CONFIG_HOME/idstack` (`~/.config/idstack`) | Where `models.json`, your model overrides, is read from. |
 | `XDG_CONFIG_HOME` | `~/.config` | Base of the OpenCode skills and agents defaults. |
 | `XDG_DATA_HOME` | `~/.local/share` | Base of the `IDSTACK_CACHE_DIR` default. |
 
@@ -309,14 +328,14 @@ The CLI itself reads:
 
 | Variable | Default | Used for |
 | --- | --- | --- |
-| `IDSTACK_CONFIG_DIR` | `$XDG_CONFIG_HOME/idstack` (`~/.config/idstack`) | Guard settings. |
+| `IDSTACK_CONFIG_DIR` | `$XDG_CONFIG_HOME/idstack` (`~/.config/idstack`) | Guard settings and `models.json`. |
 | `IDSTACK_STATE_DIR` | `$XDG_STATE_HOME/idstack` (`~/.local/state/idstack`) | Guard log and allow-once tokens. |
 | `IDSTACK_GUARD_MODE` | unset | `off`, `log`, or `ask`, overriding the config file. |
 | `TYPESAFE_API_KEY` | unset | Jev. Without it, `idstack judge` exits 4 and playbooks use their deterministic checks; a failed call exits 3. |
 | `IDSTACK_JEV_URL` | `https://api.typesafe.ai/v1/systemone` | The Jev endpoint. |
 
 Pointing all of the installer's variables at a temporary directory gives an isolated install that
-touches nothing else, which is how CI tests the script.
+touches nothing else, which is how CI tests the script. An empty variable counts as unset.
 
 | Exit code | Meaning |
 | --- | --- |
