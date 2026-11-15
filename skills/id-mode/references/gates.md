@@ -37,11 +37,11 @@ The operator can authorize work ahead of time in two forms. Record each as a tod
 
 Example predicates:
 
-- **Terraform, OpenTofu** (`plan.json` from `show -json`): no delete or replace, and every changed address in the named set. `idstack plan-summary plan.json --scope '<glob>' --predicate` checks both and exits 0 only on a pass. It also fails on any IAM or network change unless the grant names that kind of change and you pass `--allow-iam` or `--allow-network`. Without the CLI:
+- **Terraform, OpenTofu** (`plan.json` from `show -json`): no delete or replace, and every changed address in the named set. `idstack plan-summary plan.json --scope '<glob>' --predicate` checks both and exits 0 only on a pass. It also fails on any IAM or network change unless the grant names that kind of change and you pass `--allow-iam` or `--allow-network`. `--predicate` needs a scope and exits 2 without one. Without the CLI a predicate grant cannot pass: the step stops at a normal gate. The `jq` lines below are a reading aid for that gate, not a check. They show deletes, replaces, and addresses, and cannot see an IAM or network change made through an attribute of some other resource type:
 
   ```sh
-  jq '[.resource_changes[] | select(.change.actions - ["no-op","read","create","update"] != [])] | length' plan.json   # must print 0
-  jq -r '.resource_changes[] | select(.change.actions != ["no-op"] and .change.actions != ["read"]) | .address' plan.json   # every line in the named set
+  jq '[.resource_changes[] | select(.change.actions - ["no-op","read","create","update"] != [])] | length' plan.json   # deletes, replaces, forgets
+  jq -r '.resource_changes[] | select(.change.actions != ["no-op"] and .change.actions != ["read"]) | .address' plan.json   # changed addresses
   ```
 
 - **Helm, Kustomize** (rendered diff against live, and the live objects missing from the new render, which the diff does not show and prune deletes): only the named kinds and names change; no deletions or prunes, and no CRD, RBAC, PVC, or NetworkPolicy changes.
