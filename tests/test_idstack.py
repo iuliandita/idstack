@@ -529,9 +529,9 @@ class ModelRoutingTest(unittest.TestCase):
         everything = set(self.PROVIDERS)
         cases = [
             ("claudeAgent", "hardest tasks", "claude-opus-5-5 high via claudeAgent"),
-            ("codex", "hardest tasks", "gpt-6.1-sol high via codex"),
-            ("opencode", "hardest tasks", "gpt-6.1-sol high via codex"),
-            ("claudeAgent", "bug-fix", "gpt-6.1-sol high via codex"),
+            ("codex", "hardest tasks", "gpt-6.2-sol high via codex"),
+            ("opencode", "hardest tasks", "gpt-6.2-sol high via codex"),
+            ("claudeAgent", "bug-fix", "gpt-6.2-sol high via codex"),
             ("opencode", "judgment and prose", "claude-opus-5-5 medium via claudeAgent"),
             ("codex", "how explorer", "opencode-go/deepseek-v4.1-flash high via opencode"),
             ("claudeAgent", "reflect tooling", "claude-haiku-5-5 medium via claudeAgent"),
