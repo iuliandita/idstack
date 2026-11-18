@@ -208,8 +208,8 @@ on each provider and resolves to the best one this machine can reach, whether yo
 all three harnesses:
 
 ```text
-bug-fix: gpt-6.1-sol high via codex else claude-opus-5-5 high via claudeAgent else opencode-go/deepseek-v4.1-flash high via opencode
-hardest tasks: gpt-6.1-sol high via codex or claude-opus-5-5 high via claudeAgent else opencode-go/deepseek-v4.1-flash high via opencode
+bug-fix: gpt-6.2-sol high via codex else claude-opus-5-5 high via claudeAgent else opencode-go/deepseek-v4.1-flash high via opencode
+hardest tasks: gpt-6.2-sol high via codex or claude-opus-5-5 high via claudeAgent else opencode-go/deepseek-v4.1-flash high via opencode
 ```
 
 A provider is reachable when it is the harness you are in, when T3 Code's `delegate_task` offers it,
@@ -251,7 +251,7 @@ key by key, so one role is enough:
 ```json
 {
   "roles": {
-    "hardest tasks": "claude-opus-5-5 high via claudeAgent else gpt-6.1-sol high via codex",
+    "hardest tasks": "claude-opus-5-5 high via claudeAgent else gpt-6.2-sol high via codex",
     "swarm workers": "opencode-go/deepseek-v4.1-flash high via opencode else claude-sonnet-5-5 medium via claudeAgent"
   }
 }
