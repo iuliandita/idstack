@@ -6,6 +6,8 @@ v0.x was the prerelease phase, where breaking changes were expected.
 
 ## [Unreleased]
 
+## [1.1.5] - 2026-11-25
+
 ### Fixed
 
 - The guard no longer holds a quoted heredoc fed to a script interpreter (`python3 - <<'EOF'` and the like) because its
@@ -329,7 +331,8 @@ playbooks yet.
   Code and Codex CLIs, security scanning, release workflow, issue and PR templates, and Dependabot
   for workflow actions and the pinned CLIs.
 
-[Unreleased]: https://github.com/iuliandita/idstack/compare/v1.1.4...HEAD
+[Unreleased]: https://github.com/iuliandita/idstack/compare/v1.1.5...HEAD
+[1.1.5]: https://github.com/iuliandita/idstack/compare/v1.1.4...v1.1.5
 [1.1.4]: https://github.com/iuliandita/idstack/compare/v1.1.3...v1.1.4
 [1.1.3]: https://github.com/iuliandita/idstack/compare/v1.1.2...v1.1.3
 [1.1.2]: https://github.com/iuliandita/idstack/compare/v1.1.1...v1.1.2
