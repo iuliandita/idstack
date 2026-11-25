@@ -32,6 +32,13 @@
         "read": "env IULIANDITA_MODS_NOTIFY=off opencode run --agent plan -m {model}#{effort} \"<brief>\"",
         "write": "env IULIANDITA_MODS_NOTIFY=off opencode run -m {model}#{effort} --auto \"<brief>\""
       }
+    },
+    "antigravity": {
+      "option": "thought_level",
+      "cli": {
+        "read": "agy --model {model}-{effort} --mode plan -p=\"<brief>\"",
+        "write": "agy --model {model}-{effort} --mode accept-edits -p=\"<brief>\""
+      }
     }
   },
   "budget": "medium (high)",

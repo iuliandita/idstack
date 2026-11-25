@@ -6,6 +6,12 @@ v0.x was the prerelease phase, where breaking changes were expected.
 
 ## [Unreleased]
 
+### Added
+
+- `antigravity` is a model-routing provider. A role can name `<model> <effort> via antigravity`; the script checks it
+  against `agy models`, writes the `agy -p` read and write commands into `pstack-models.md`, and counts it reachable
+  when `agy` is on PATH. The shipped roles do not use it. (#117)
+
 ## [1.1.5] - 2026-11-25
 
 ### Fixed

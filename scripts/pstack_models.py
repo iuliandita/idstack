@@ -151,7 +151,28 @@ def opencode_catalog() -> dict[str, set[str] | None] | None:
     return catalog(["opencode", "models"], lambda out: {line.strip(): None for line in out.splitlines() if "/" in line})
 
 
+AGY_EFFORT = re.compile(r"^(.+)-(low|medium|high|xhigh)$")
+
+
+def parse_agy_models(out: str) -> dict[str, set[str]]:
+    """`agy models` lists one id per effort (`gemini-4-hydrogen-high`); fold them into model -> efforts.
+
+    An id without an effort suffix cannot be addressed as `<model>-<effort>`, so it is left out.
+    """
+    models: dict[str, set[str]] = {}
+    for line in out.splitlines():
+        if m := AGY_EFFORT.match(line.split("\t", 1)[0].strip()):
+            models.setdefault(m[1], set()).add(m[2])
+    return models
+
+
+def antigravity_catalog() -> dict[str, set[str] | None] | None:
+    return catalog(["agy", "models"], parse_agy_models)
+
+
 HARNESS_PROVIDER = {"claude": "claudeAgent", "codex": "codex", "opencode": "opencode"}
+# Providers that are reachable as a CLI without being a harness that reads the file.
+CLI_PROVIDER = {**HARNESS_PROVIDER, "agy": "antigravity"}
 
 
 def resolve(value: str, harness: str, reachable: set[str]) -> list[str]:
@@ -184,6 +205,7 @@ def validate(roles: dict[str, str], t3: dict) -> list[str]:
     catalogs = {
         "codex": codex_catalog(),
         "opencode": opencode_catalog(),
+        "antigravity": antigravity_catalog(),
         "claudeAgent": {m: None for m in t3["claudeAgent"]["models"]},
     }
     for name, cat in catalogs.items():
@@ -235,8 +257,9 @@ def render(spec: dict, t3: dict) -> str:
         "# `inherit-parent` or `auto` as a value: the role runs on the parent chat model (omit the subagent `model`).",
         MARKER,
         "# A value is a chain of options `<model> <effort> via <provider>`, joined by ` else ` and ` or `.",
-        "# Providers: claudeAgent (Claude Code), codex (Codex), opencode (OpenCode). A provider is reachable",
-        "# when it is the harness you are in, when T3 Code's delegate_task offers it, or when its CLI is on PATH;",
+        "# Providers: claudeAgent (Claude Code), codex (Codex), opencode (OpenCode), antigravity (Antigravity).",
+        "# A provider is reachable when it is the harness you are in, when T3 Code's delegate_task offers it,",
+        "# or when its CLI is on PATH;",
         "# a CLI that fails (signed out, no network in a sandbox) is not reachable.",
         "# Resolve one ` else ` group at a time, left to right. In a group, the option on the harness you are in",
         "# wins; otherwise the first reachable option. When no group has a reachable option, use the parent",
@@ -303,7 +326,7 @@ def main() -> int:
         return 0
     if args.resolve:
         harness = HARNESS_PROVIDER[args.resolve]
-        reachable = {harness} | {HARNESS_PROVIDER[h] for h in HARNESS_PROVIDER if shutil.which(h)}
+        reachable = {harness} | {p for cli, p in CLI_PROVIDER.items() if shutil.which(cli)}
         print(f"from {args.resolve}, reachable: {', '.join(sorted(reachable))}")
         for role in ROLES:
             print(f"  {role}: {' + '.join(resolve(config['roles'][role], harness, reachable))}")
