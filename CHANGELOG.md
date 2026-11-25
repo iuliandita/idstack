@@ -6,6 +6,11 @@ v0.x was the prerelease phase, where breaking changes were expected.
 
 ## [Unreleased]
 
+### Fixed
+
+- The guard no longer holds a quoted heredoc fed to a script interpreter (`python3 - <<'EOF'` and the like) because its
+  body mentions `bash -c` in backticks. The body is data there. Unquoted heredocs and a bare `bash -c` stay held.
+
 ## [1.1.4] - 2026-11-18
 
 ### Fixed

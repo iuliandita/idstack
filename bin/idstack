@@ -984,6 +984,8 @@ NON_EXEC = re.compile(
     r"|mkdir|more|mv|pacman|paru|printf|pushd|read|readlink|readonly|realpath|return|rg|rm|rmdir|rsync|scp|sed"
     r"|select|sort|stat|tail|tar|tee|test|touch|tr|tree|true|type|uniq|unset|wc|wget|whereis|which|yay|yq"
 )
+# Script interpreters whose stdin is their own language, not shell text: a heredoc fed to one is data here.
+INTERPRETERS = re.compile(r"(python|pypy)[0-9.]*|node|nodejs|deno|bun|ruby|perl|php|lua|Rscript")
 GIT_EXEC = {"bisect", "foreach", "filter-branch", "--exec", "-x"}
 FIND_EXEC = {"-exec", "-execdir", "-ok", "-okdir"}
 FINDERS = ("find", "fd", "fdfind")
@@ -1481,6 +1483,8 @@ def stdin_consumer(chain: list[dict], tools: set[str]) -> str:
     for seg in chain:
         w = strip_wrappers(seg["words"])
         if not w or (args_are_data(w) and not indirect_runner(seg["words"])) or os.path.basename(w[0]) in tools:
+            continue
+        if INTERPRETERS.fullmatch(os.path.basename(w[0])) and not indirect_runner(seg["words"]):
             continue
         kind = "remote" if kind == "remote" or "ssh" in map(os.path.basename, w) else "local"
     return kind
