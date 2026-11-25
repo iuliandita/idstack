@@ -213,8 +213,10 @@ hardest tasks: gpt-6.2-sol high via codex or claude-opus-5-5 high via claudeAgen
 ```
 
 A provider is reachable when it is the harness you are in, when T3 Code's `delegate_task` offers it,
-or when its CLI is on PATH (`codex exec`, `claude -p`, or `opencode run`, read-only unless the role
-edits files; the exact commands come from the `t3` section of the JSON). The role takes the first
+or when its CLI is on PATH (`codex exec`, `claude -p`, `opencode run`, or `agy -p`, read-only unless
+the role edits files; the exact commands come from the `t3` section of the JSON). `antigravity` is a
+provider only: the shipped roles do not use it, so name it in your own models (below) with
+`gemini-4-hydrogen medium via antigravity`; the effort is part of the `agy` model id. The role takes the first
 reachable option, one `else` group at a time. Within an `or` group the option on your own harness
 wins, so "hardest tasks" runs Sol in Codex and Opus in Claude Code. A role with nothing reachable
 runs on the session's own model.
@@ -267,7 +269,7 @@ Effort starts at `medium` and goes to `high` only for hard roles; fast mode and 
 are off. Before writing, the script checks every role is present and every option parses. It checks
 Claude models against the list in the JSON, Codex models and efforts against
 `codex debug models` (only when Codex is signed in; signed out it lists an older bundled catalog),
-OpenCode models against `opencode models`, and DeepSeek Flash efforts against the list in the JSON. A CLI that is missing or signed out is skipped with a warning.
+OpenCode models against `opencode models`, Antigravity models and efforts against `agy models`, and DeepSeek Flash efforts against the list in the JSON. A CLI that is missing or signed out is skipped with a warning.
 
 Each file carries a `managed by idstack` line. The script replaces only files with that line. If
 you ran `/setup-pstack` yourself, it leaves your file alone and says so; `--check` counts such a
