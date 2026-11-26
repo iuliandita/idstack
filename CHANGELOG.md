@@ -8,6 +8,10 @@ v0.x was the prerelease phase, where breaking changes were expected.
 
 ### Added
 
+- `idstack guard trust HOST...` (and `untrust`) keep a `trusted_hosts` list in `guard.json`. The remote-only rules
+  (`rm`, `kill`, `systemctl`, `docker rm`, package removal, `rsync --delete`, and the rest) no longer hold a command
+  whose every ssh hop, or rsync target, is on the list. Infra-tool rules stay held behind a trusted host, and a hop
+  to an untrusted host stays held. An agent cannot run `guard trust`. (#119)
 - `antigravity` is a model-routing provider. A role can name `<model> <effort> via antigravity`; the script checks it
   against `agy models`, writes the `agy -p` read and write commands into `pstack-models.md`, and counts it reachable
   when `agy` is on PATH. The shipped roles do not use it. (#117)

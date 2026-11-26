@@ -20,7 +20,7 @@
 [[rule]]
 tools = ["idstack"]
 requires = "guard"
-any_verb_regex = "^(allow-once|enable|disable|install|uninstall)$"
+any_verb_regex = "^(allow-once|enable|disable|install|uninstall|trust|untrust)$"
 reason = "changes the guard itself; only the operator does this"
 
 [[rule]]
