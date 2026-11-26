@@ -247,6 +247,17 @@ TRUSTED = [
     ("remote flag names no host", "ssh devbox systemctl -H prod stop x", True, True),
     ("infra tool behind the host", "ssh devbox 'terraform apply'", True, True),
     ("infra tool piped to the host", "echo 'kubectl delete ns x' | ssh devbox", True, True),
+    ("plain ssh options", "ssh -o BatchMode=yes -p 2222 devbox rm x", True, False),
+    ("options after the host", "ssh devbox -v -- rm x", True, False),
+    ("HostName override", "ssh -o HostName=prod devbox rm x", True, True),
+    ("HostName override, attached", "ssh -oHostName=prod devbox rm x", True, True),
+    ("ProxyJump override", "ssh -o 'ProxyJump prod' devbox rm x", True, True),
+    ("jump host", "ssh -J prod devbox rm x", True, True),
+    ("other config file", "ssh -F cfg devbox rm x", True, True),
+    ("override after the host", "ssh devbox -o ProxyCommand=x rm x", True, True),
+    ("rsync over plain ssh", "rsync -e 'ssh -p 2222' -a --delete s/ devbox:/d/", True, False),
+    ("rsync over a jump host", "rsync -e 'ssh -J prod' -a --delete s/ devbox:/d/", True, True),
+    ("rsync over another program", "rsync -e ./wrap -a --delete s/ devbox:/d/", True, True),
     ("host-name lookalike", "ssh devbox.example.com 'rm -rf /x'", True, True),
 ]
 

@@ -170,8 +170,10 @@ or, for `rsync --delete`, when the remote target is listed. Hosts match by name,
 `user@` and `:port` are dropped; there are no globs. Rules for infra tools (`terraform`, `kubectl`, `ansible`,
 cloud CLIs, `gh pr merge`) stay held behind a trusted host, and so does `systemctl -H`, which names no hop. Only the
 operator can edit the list: an agent running `guard trust` or touching `guard.json` is held.
-`guard status` shows it. The match is on the name you type, so an `ssh` alias or `-o HostName=` that points
-elsewhere is not seen.
+`guard status` shows it. The match is on the name you type, so an `ssh` alias that your own `~/.ssh/config`
+points at another machine is not seen. An option that redirects the call (`-o HostName=`, `ProxyCommand`,
+`ProxyJump`, `RemoteCommand`, `-J`, `-F`, `-W`, or an `rsync -e` that is not plain `ssh`) makes the hop unknown,
+so the command is held.
 
 A heredoc is skipped only when nothing after it can run it (`cat` to a file, `gh ... --body-file -`),
 so a commit message or PR body that mentions a destructive command passes. A quoted string that is

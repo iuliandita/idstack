@@ -1357,12 +1357,52 @@ def rule_hit(tool: str, verb: str, rule: dict, text: str, hosts: Hosts) -> dict:
     return hit
 
 
+# ssh options that can send the connection somewhere other than the name typed: a jump host, a proxy, a
+# different config file, a forward, or a HostName override. A hop that uses one cannot be trusted by name.
+SSH_REDIRECT = re.compile(r"\s*(?:hostname|proxycommand|proxyjump|remotecommand)\b", re.IGNORECASE)
+
+
 def ssh_target(args: list[str]) -> tuple[str, list[str]] | None:
-    """The host and the command words in the arguments of an ssh call, or None when it names no host."""
-    j = 0
-    while j < len(args) and args[j].startswith("-"):
-        j += 2 if len(args[j]) == 2 and args[j][1] in SSH_VALUE_FLAGS else 1
-    return (args[j], args[j + 1 :]) if j < len(args) else None
+    """The hop and the command words in the arguments of an ssh call, or None when it names no host. The hop
+    is the lower-case host name, or "?" when an option (before or after the host) can redirect the call."""
+    host, redirect, i = None, False, 0
+    while i < len(args):
+        a = args[i]
+        if a == "--" and host is not None:
+            i += 1
+            break
+        if not a.startswith("-"):
+            if host is not None:
+                break
+            host, i = a, i + 1
+            continue
+        flag, takes = a[1:2], len(a) == 2 and a[1:2] in SSH_VALUE_FLAGS
+        value = args[i + 1] if takes and i + 1 < len(args) else a[2:]
+        redirect = redirect or flag in ("J", "F", "W") or (flag == "o" and SSH_REDIRECT.match(value) is not None)
+        i += 2 if takes else 1
+    if host is None:
+        return None
+    return ("?" if redirect else host_name(host) or "?"), args[i:]
+
+
+def rsh_redirects(args: list[str]) -> bool:
+    """True when an rsync call names a remote shell that is not plain ssh, or ssh with a redirecting option."""
+    for i, a in enumerate(args):
+        if a in ("-e", "--rsh") and i + 1 < len(args):
+            value = args[i + 1]
+        elif a.startswith("--rsh="):
+            value = a[6:]
+        elif a.startswith("-e") and not a.startswith("--"):
+            value = a[2:]
+        else:
+            continue
+        words = value.split()
+        if not words or os.path.basename(words[0]) != "ssh":
+            return True
+        found = ssh_target([*words[1:], "x"])  # a dummy host: only the options matter
+        if found is None or found[0] == "?":
+            return True
+    return False
 
 
 def host_name(target: str) -> str:
@@ -1523,7 +1563,7 @@ def stdin_consumer(chain: list[dict], tools: set[str]) -> tuple[str, Hosts]:
         names = [os.path.basename(t) for t in w]
         if "ssh" in names:
             target = ssh_target(w[names.index("ssh") + 1 :])
-            hosts += ((host_name(target[0]) if target else "") or "?",)
+            hosts += (target[0] if target else "?",)
         kind = "remote" if kind == "remote" or "ssh" in names else "local"
     return kind, hosts
 
@@ -1598,7 +1638,8 @@ def match_rules(tool: str, args: list[str], rules: list[dict], remote: Hosts, ba
         targeted = bool(rule.get("remote_target") and pos and re.search(rule["remote_target"], pos[-1]))
         if rule.get("remote_only") and not (remote or flagged or targeted):
             continue
-        hosts = remote + (("?",) if flagged else ()) + ((host_name(pos[-1]),) if targeted else ())
+        hosts = remote + (("?",) if flagged or (targeted and rsh_redirects(args)) else ())
+        hosts += (host_name(pos[-1]),) if targeted else ()
         flags = rule.get("danger_flags", [])
         danger = next((a for a in args if a in flags or a.split("=")[0] in flags), None)
         if danger:
@@ -1704,8 +1745,7 @@ def literal_hits(seg: dict, raw: str, rules: list[dict], tools: set[str], remote
             if target is None:
                 continue
             host, rest = target
-            rest = rest[1:] if rest[:1] == ["--"] else rest
-            hops = remote + (host_name(host) or "?",)
+            hops = remote + (host,)
             sub = classify(" ".join(rest), rules, hops, depth + 1) if rest else []
             words = " ".join(rest).split()
             inner = strip_wrappers(words)
