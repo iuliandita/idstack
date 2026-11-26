@@ -407,9 +407,9 @@ older than 4.4, which prints only `ok`, `errors`, and `exit_code`.
 | `idstack guard allow-once` | `allowed`, `ttl`, `cwd` |
 | `idstack guard install`, `uninstall` | `harness`, `path`, `uninstall`, `changed`, `dry_run` and `config` (with `--dry-run`), `plugin_hook` (Codex: the plugin's hook file, or null) |
 
-`idstack guard hook` is the harness hook protocol. It reads and writes the harness's own JSON and
-has no `--json` flag. A usage error (an unknown option or battery) also prints
-`{"ok": false, "errors": [...]}` with `--json` and exits 2.
+`idstack guard hook` is the harness hook protocol. It reads and writes the harness's own JSON; it
+accepts `--json` but still answers in that protocol, not the CLI JSON format. A usage error (an unknown
+option or battery) also prints `{"ok": false, "errors": [...]}` with `--json` and exits 2.
 
 ## Environment and exit codes
 

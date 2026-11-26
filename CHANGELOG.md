@@ -6,6 +6,12 @@ v0.x was the prerelease phase, where breaking changes were expected.
 
 ## [Unreleased]
 
+### Fixed
+
+- `docs/plan.md`, INSTALL.md, and `src/questions/README.md` now match the code: the Codex guard install drops its
+  own entry when the plugin ships the hook, `guard hook` accepts `--json`, and a flagged answer wins over a
+  threshold tie.
+
 ## [1.2.0] - 2026-11-26
 
 ### Added

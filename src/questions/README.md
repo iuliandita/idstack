@@ -29,7 +29,7 @@ One file per decision point: `<battery>.json`. `idstack judge <battery> <items.j
   - `any-above`: `flag` when any answer is above `threshold`, `clear` when all are below it.
   - `any-below`: `flag` when any answer is below `threshold`, `clear` when all are above it.
   - `rank`: like `any-above`, and items are also printed unsettled first, then in descending order of their highest answer.
-- An answer exactly on the threshold, a missing answer, or a failed call makes the item `unsettled`. Callers treat `unsettled` like `flag`.
+- A missing answer or a failed call makes the item `unsettled`. An answer exactly on the threshold also makes it `unsettled` unless another answer already triggers `flag`. Callers treat `unsettled` like `flag`.
 - Two batteries are exceptions on purpose:
   - `outgoing-claims` uses `any-below`: its question asks whether a claim is supported, so true is the safe answer and a low answer flags.
   - `log-filtering`: `clear` lets a chunk be skipped on the first pass, the one outcome that sets something aside. Full logs are kept, the filter widens when the kept chunks do not explain the symptom, and a skipped chunk is never evidence that something did not happen.
