@@ -544,6 +544,7 @@ class ModelRoutingTest(unittest.TestCase):
         t3 = {"claudeAgent": {"models": ["claude-x"], "efforts": {}}, "codex": {"efforts": {"gpt-b": ["high"]}}}
         codex = {"gpt-a": {"medium", "high"}, "gpt-b": {"low", "high"}}
         opencode = {"o/m": None}
+        agy = {"gem": {"low", "high"}}
         base = dict.fromkeys(pstack_models.ROLES, "inherit-parent")
         no_bug_fix = {k: v for k, v in base.items() if k != "bug-fix"}
         ok = "gpt-a high via codex or claude-x medium via claudeAgent, o/m max via opencode, opus low, auto"
@@ -601,15 +602,36 @@ class ModelRoutingTest(unittest.TestCase):
                 ],
             ),
             ("catalog unavailable skips the model check", {**base, "bug-fix": "ghost high via codex"}, None, []),
+            ("antigravity model and effort", {**base, "bug-fix": "gem high via antigravity"}, codex, []),
+            (
+                "antigravity effort not offered",
+                {**base, "bug-fix": "gem xhigh via antigravity"},
+                codex,
+                ["bug-fix: gem does not support effort 'xhigh'"],
+            ),
         ]
         for name, roles, codex_cat, want in cases:
             with (
                 self.subTest(name),
                 mock.patch.object(pstack_models, "codex_catalog", return_value=codex_cat),
                 mock.patch.object(pstack_models, "opencode_catalog", return_value=opencode),
+                mock.patch.object(pstack_models, "antigravity_catalog", return_value=agy),
                 contextlib.redirect_stderr(io.StringIO()),
             ):
                 self.assertEqual(pstack_models.validate(roles, t3), want)
+
+    def test_parse_agy_models_folds_efforts_and_skips_unsuffixed_ids(self):
+        out = (
+            "Fetching available models...\n"
+            "gemini-4-hydrogen-high\tGemini 4 Hydrogen (High)\n"
+            "gemini-4-hydrogen-xhigh\tGemini 4 Hydrogen (XHigh)\n"
+            "gemini-3.8-flash-low\tGemini 3.8 Flash (Low)\n"
+            "claude-sonnet-4-6\tClaude Sonnet 4.6 (Thinking)\n"
+        )
+        self.assertEqual(
+            pstack_models.parse_agy_models(out),
+            {"gemini-4-hydrogen": {"high", "xhigh"}, "gemini-3.8-flash": {"low"}},
+        )
 
 
 class ModelOverrideTest(unittest.TestCase):

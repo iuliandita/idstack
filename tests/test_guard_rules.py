@@ -232,6 +232,92 @@ class RuleTableTest(unittest.TestCase):
                 self.assertTrue("verbs" in rule or "any_verb_regex" in rule)
 
 
+# command, held with no trusted hosts, held with devbox and buildbox trusted
+TRUSTED = [
+    ("rm behind ssh", "ssh devbox 'rm -rf /srv/x'", True, False),
+    ("user and case ignored", "ssh -o BatchMode=yes ID@DEVBOX 'sudo -n kill 12; systemctl restart x'", True, False),
+    ("shell payload", "ssh buildbox 'bash -c \"rm -rf /x\"'", True, False),
+    ("heredoc", "ssh devbox <<'EOF'\nrm -rf /x\nEOF", True, False),
+    ("pipe into ssh", "echo 'rm -rf /x' | ssh devbox", True, False),
+    ("rsync delete to the host", "rsync -a --delete src/ devbox:/srv/", True, False),
+    ("other host", "ssh prod 'rm -rf /srv/x'", True, True),
+    ("trusted host first, other second", "ssh devbox ssh prod rm -rf x", True, True),
+    ("other host first, trusted second", "ssh prod ssh devbox rm -rf x", True, True),
+    ("rsync delete to another host", "rsync -a --delete src/ prod:/srv/", True, True),
+    ("remote flag names no host", "ssh devbox systemctl -H prod stop x", True, True),
+    ("infra tool behind the host", "ssh devbox 'terraform apply'", True, True),
+    ("infra tool piped to the host", "echo 'kubectl delete ns x' | ssh devbox", True, True),
+    ("plain ssh options", "ssh -o BatchMode=yes -p 2222 devbox rm x", True, False),
+    ("options after the host", "ssh devbox -v -- rm x", True, False),
+    ("HostName override", "ssh -o HostName=prod devbox rm x", True, True),
+    ("HostName override, attached", "ssh -oHostName=prod devbox rm x", True, True),
+    ("ProxyJump override", "ssh -o 'ProxyJump prod' devbox rm x", True, True),
+    ("jump host", "ssh -J prod devbox rm x", True, True),
+    ("other config file", "ssh -F cfg devbox rm x", True, True),
+    ("override after the host", "ssh devbox -o ProxyCommand=x rm x", True, True),
+    ("rsync over plain ssh", "rsync -e 'ssh -p 2222' -a --delete s/ devbox:/d/", True, False),
+    ("rsync over a jump host", "rsync -e 'ssh -J prod' -a --delete s/ devbox:/d/", True, True),
+    ("rsync over another program", "rsync -e ./wrap -a --delete s/ devbox:/d/", True, True),
+    ("control socket", "ssh -S /tmp/sock devbox rm x", True, True),
+    ("control command", "ssh -O exit devbox rm x", True, True),
+    ("ControlPath option", "ssh -o ControlPath=/tmp/s devbox rm x", True, True),
+    ("bundled flag then override", "ssh -qo HostName=prod devbox rm x", True, True),
+    ("bundled flag with a jump host", "ssh -vJprod devbox rm x", True, True),
+    ("unknown flag", "ssh -h devbox rm x", True, True),
+    ("bundled plain flags", "ssh -tt -vq devbox rm x", True, False),
+    ("rsync bundle over a jump host", "rsync -ae 'ssh -J prod' --delete s/ devbox:/d/", True, True),
+    ("rsync bundle over ssh", "rsync -ae ssh --delete s/ devbox:/d/", True, False),
+    ("rsync long flag, separate value", "rsync --rsh 'ssh -p 22' --delete s/ devbox:/d/", True, False),
+    ("rsync shell names another host", "rsync -e 'ssh prod' --delete s/ devbox:/d/", True, True),
+    ("rsync shell with a quoted override", "rsync -e \"ssh -o 'ProxyJump prod'\" --delete s/ devbox:/d/", True, True),
+    ("rsync shell from the environment", "RSYNC_RSH=./wrap rsync --delete s/ devbox:/d/", True, True),
+    ("host-name lookalike", "ssh devbox.example.com 'rm -rf /x'", True, True),
+]
+
+
+class TrustedHostTest(unittest.TestCase):
+    cfg = {"trusted_hosts": ["buildbox", "devbox"]}
+
+    def test_remote_only_rules_skip_trusted_hosts(self):
+        for name, cmd, plain, trusted in TRUSTED:
+            with self.subTest(name, cmd=cmd):
+                self.assertEqual(idstack.guard_decide(cmd, {})["match"], plain)
+                self.assertEqual(idstack.guard_decide(cmd, self.cfg)["match"], trusted)
+
+    def test_config_list_is_normalized(self):
+        tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, tmp)
+        cases = [
+            ('{"trusted_hosts": ["DEVBOX", "me@buildbox", ""]}', ["buildbox", "devbox"]),
+            ('{"trusted_hosts": "devbox"}', []),
+            ('{"trusted_hosts": ["devbox", 7]}', []),
+        ]
+        for text, want in cases:
+            with self.subTest(text):
+                (tmp / "guard.json").write_text(text)
+                with mock.patch.object(idstack, "CONFIG_DIR", tmp):
+                    self.assertEqual(idstack.guard_config()["trusted_hosts"], want)
+
+    def test_trust_and_untrust(self):
+        tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, tmp)
+        env = {**os.environ, "IDSTACK_CONFIG_DIR": str(tmp)}
+
+        def cli(*argv: str) -> dict:
+            r = subprocess.run(
+                [sys.executable, str(BIN), "guard", *argv, "--json"], capture_output=True, text=True, env=env
+            )
+            self.assertEqual(r.returncode, 0, r.stderr)
+            return json.loads(r.stdout)
+
+        self.assertEqual(cli("trust", "devbox", "me@buildbox")["trusted_hosts"], ["buildbox", "devbox"])
+        self.assertEqual(cli("untrust", "DEVBOX")["trusted_hosts"], ["buildbox"])
+        self.assertEqual(cli("status")["config"]["trusted_hosts"], ["buildbox"])
+        self.assertTrue(idstack.classify("idstack guard trust prod", idstack.load_rules()))
+        r = subprocess.run([sys.executable, str(BIN), "guard", "trust", "--json"], capture_output=True, env=env)
+        self.assertEqual(r.returncode, 2)
+
+
 class CodexEntryTest(unittest.TestCase):
     """The entry `guard install --harness codex` writes runs the hook shim of the same checkout."""
 

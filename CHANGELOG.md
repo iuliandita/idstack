@@ -6,6 +6,18 @@ v0.x was the prerelease phase, where breaking changes were expected.
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-11-26
+
+### Added
+
+- `idstack guard trust HOST...` (and `untrust`) keep a `trusted_hosts` list in `guard.json`. The remote-only rules
+  (`rm`, `kill`, `systemctl`, `docker rm`, package removal, `rsync --delete`, and the rest) no longer hold a command
+  whose every ssh hop, or rsync target, is on the list. Infra-tool rules stay held behind a trusted host, and a hop
+  to an untrusted host stays held. An agent cannot run `guard trust`. (#119)
+- `antigravity` is a model-routing provider. A role can name `<model> <effort> via antigravity`; the script checks it
+  against `agy models`, writes the `agy -p` read and write commands into `pstack-models.md`, and counts it reachable
+  when `agy` is on PATH. The shipped roles do not use it. (#117)
+
 ## [1.1.5] - 2026-11-25
 
 ### Fixed
@@ -331,7 +343,8 @@ playbooks yet.
   Code and Codex CLIs, security scanning, release workflow, issue and PR templates, and Dependabot
   for workflow actions and the pinned CLIs.
 
-[Unreleased]: https://github.com/iuliandita/idstack/compare/v1.1.5...HEAD
+[Unreleased]: https://github.com/iuliandita/idstack/compare/v1.2.0...HEAD
+[1.2.0]: https://github.com/iuliandita/idstack/compare/v1.1.5...v1.2.0
 [1.1.5]: https://github.com/iuliandita/idstack/compare/v1.1.4...v1.1.5
 [1.1.4]: https://github.com/iuliandita/idstack/compare/v1.1.3...v1.1.4
 [1.1.3]: https://github.com/iuliandita/idstack/compare/v1.1.2...v1.1.3
