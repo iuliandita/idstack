@@ -1357,52 +1357,112 @@ def rule_hit(tool: str, verb: str, rule: dict, text: str, hosts: Hosts) -> dict:
     return hit
 
 
-# ssh options that can send the connection somewhere other than the name typed: a jump host, a proxy, a
-# different config file, a forward, or a HostName override. A hop that uses one cannot be trusted by name.
-SSH_REDIRECT = re.compile(r"\s*(?:hostname|proxycommand|proxyjump|remotecommand)\b", re.IGNORECASE)
+# ssh options are read as getopt does, and anything that is not known to leave the destination alone makes the
+# hop unknown: a jump host, proxy, control socket, config file, or forward-to-stdio can send the call elsewhere.
+SSH_PLAIN = frozenset("46AaCfGgKkMNnqsTtVvXxYy")  # flags that take no value
+SSH_MOVING = frozenset("FJOSW")  # value flags that can change where the call goes
+SSH_SAFE_OPTIONS = frozenset(  # -o keys that cannot
+    [
+        "addressfamily",
+        "batchmode",
+        "bindaddress",
+        "bindinterface",
+        "ciphers",
+        "compression",
+        "connectionattempts",
+        "connecttimeout",
+        "forwardagent",
+        "hostkeyalgorithms",
+        "identitiesonly",
+        "identityfile",
+        "kbdinteractiveauthentication",
+        "kexalgorithms",
+        "loglevel",
+        "macs",
+        "numberofpasswordprompts",
+        "passwordauthentication",
+        "port",
+        "preferredauthentications",
+        "pubkeyauthentication",
+        "requesttty",
+        "sendenv",
+        "serveralivecountmax",
+        "serveraliveinterval",
+        "setenv",
+        "stricthostkeychecking",
+        "tcpkeepalive",
+        "user",
+        "userknownhostsfile",
+        "verifyhostkeydns",
+        "visualhostkey",
+    ]
+)
+
+
+def ssh_option_moves(value: str) -> bool:
+    return re.split(r"[=\s]+", value.strip(), maxsplit=1)[0].lower() not in SSH_SAFE_OPTIONS
 
 
 def ssh_target(args: list[str]) -> tuple[str, list[str]] | None:
     """The hop and the command words in the arguments of an ssh call, or None when it names no host. The hop
-    is the lower-case host name, or "?" when an option (before or after the host) can redirect the call."""
+    is the lower-case host name, or "?" when an option, before or after the host, may send the call elsewhere."""
     host, redirect, i = None, False, 0
     while i < len(args):
-        a = args[i]
-        if a == "--" and host is not None:
-            i += 1
-            break
-        if not a.startswith("-"):
+        word, i = args[i], i + 1
+        if word == "--":
             if host is not None:
                 break
-            host, i = a, i + 1
             continue
-        flag, takes = a[1:2], len(a) == 2 and a[1:2] in SSH_VALUE_FLAGS
-        value = args[i + 1] if takes and i + 1 < len(args) else a[2:]
-        redirect = redirect or flag in ("J", "F", "W") or (flag == "o" and SSH_REDIRECT.match(value) is not None)
-        i += 2 if takes else 1
+        if not word.startswith("-"):
+            if host is not None:
+                i -= 1
+                break
+            host = word
+            continue
+        j = 1
+        while j < len(word):
+            c, j = word[j], j + 1
+            if c in SSH_PLAIN:
+                continue
+            if c in SSH_VALUE_FLAGS:
+                value = word[j:]
+                if not value and i < len(args):
+                    value, i = args[i], i + 1
+                redirect = redirect or c in SSH_MOVING or (c == "o" and ssh_option_moves(value))
+                break
+            redirect = True  # an option the guard does not know
     if host is None:
         return None
     return ("?" if redirect else host_name(host) or "?"), args[i:]
 
 
+RSYNC_VALUE_FLAGS = frozenset("BTfM@e")  # short options that take the rest of the word, or the next one
+
+
 def rsh_redirects(args: list[str]) -> bool:
-    """True when an rsync call names a remote shell that is not plain ssh, or ssh with a redirecting option."""
-    for i, a in enumerate(args):
-        if a in ("-e", "--rsh") and i + 1 < len(args):
-            value = args[i + 1]
-        elif a.startswith("--rsh="):
-            value = a[6:]
-        elif a.startswith("-e") and not a.startswith("--"):
-            value = a[2:]
-        else:
-            continue
-        words = value.split()
-        if not words or os.path.basename(words[0]) != "ssh":
-            return True
-        found = ssh_target([*words[1:], "x"])  # a dummy host: only the options matter
-        if found is None or found[0] == "?":
-            return True
-    return False
+    """True when an rsync call may reach its host by anything but plain ssh toward the host it names."""
+    value, i = None, 0
+    while i < len(args):
+        word, i = args[i], i + 1
+        if word.startswith("--"):
+            key, eq, rest = word.partition("=")
+            if len(key) >= 4 and "--rsh".startswith(key):
+                value = rest if eq else (args[i] if i < len(args) else "")
+        elif word.startswith("-"):
+            for j, c in enumerate(word[1:], 2):
+                if c in RSYNC_VALUE_FLAGS:
+                    taken = word[j:] or (args[i] if i < len(args) else "")
+                    if c == "e":
+                        value = taken
+                    i += 0 if word[j:] else 1
+                    break
+    if value is None:
+        return False
+    try:
+        words = shlex.split(value)
+    except ValueError:
+        return True
+    return not words or os.path.basename(words[0]) != "ssh" or ssh_target([*words[1:], "x"]) != ("x", [])
 
 
 def host_name(target: str) -> str:
@@ -1896,7 +1956,9 @@ def consume_allow(cmd: str, cwd: str) -> bool:
 
 
 def guard_decide(cmd: str, cfg: dict) -> dict:
-    hits = drop_trusted(classify(cmd, load_rules()), trusted_hosts(cfg))
+    hits = classify(cmd, load_rules())
+    if "RSYNC_RSH" not in cmd:  # the variable can change what rsync runs, and the guard does not track it
+        hits = drop_trusted(hits, trusted_hosts(cfg))
     source = "rules"
     if not hits and cfg.get("jev") and os.environ.get("TYPESAFE_API_KEY") and is_ambiguous(cmd):
         battery = load_battery("guard-ambiguous")
