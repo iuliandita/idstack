@@ -1346,6 +1346,40 @@ def guard_hit(tool: str, verb: str, reason: str, text: str) -> dict:
     return {"tool": tool, "verb": verb, "reason": reason, "segment": text[:300]}
 
 
+Hosts = tuple[str, ...]  # the ssh hops a command runs behind, outermost first; "?" is one the guard cannot name
+
+
+def rule_hit(tool: str, verb: str, rule: dict, text: str, hosts: Hosts) -> dict:
+    """A rule hit. One from a remote-only rule keeps the hosts it ran on, so a trusted host can drop it."""
+    hit = guard_hit(tool, verb, rule["reason"], text)
+    if rule.get("remote_only"):
+        hit["remote_only"], hit["hosts"] = True, list(hosts)
+    return hit
+
+
+def ssh_target(args: list[str]) -> tuple[str, list[str]] | None:
+    """The host and the command words in the arguments of an ssh call, or None when it names no host."""
+    j = 0
+    while j < len(args) and args[j].startswith("-"):
+        j += 2 if len(args[j]) == 2 and args[j][1] in SSH_VALUE_FLAGS else 1
+    return (args[j], args[j + 1 :]) if j < len(args) else None
+
+
+def host_name(target: str) -> str:
+    """The lower-case host in `host`, `user@host`, `ssh://user@host:22/`, `rsync://host/path`, or `host:path`."""
+    m = re.match(r"(?:[^@/:]*@)?([^@/:]+)", re.sub(r"^(?:ssh|rsync)://", "", target.strip().lower()))
+    return m.group(1) if m else ""
+
+
+def trusted_hosts(cfg: dict) -> set[str]:
+    return {h for h in map(host_name, cfg.get("trusted_hosts", [])) if h}
+
+
+def drop_trusted(hits: list[dict], trusted: set[str]) -> list[dict]:
+    """Hits left once the remote-only ones that ran only on trusted hosts are dropped."""
+    return [h for h in hits if not (h.get("remote_only") and h.get("hosts") and set(h["hosts"]) <= trusted)]
+
+
 def names_tool(text: str, tools: set[str]) -> bool:
     names = "|".join(re.escape(t) for t in sorted(tools, key=len, reverse=True))
     return re.search(rf"(?<![\w.-])(?:{names})(?![\w-])", text) is not None
@@ -1476,18 +1510,22 @@ def fed_text(segs: list[dict]) -> str:
     return "\n".join(parts)
 
 
-def stdin_consumer(chain: list[dict], tools: set[str]) -> str:
+def stdin_consumer(chain: list[dict], tools: set[str]) -> tuple[str, Hosts]:
     """What reads a heredoc or here-string down its pipeline: "" when every command only stores or prints
-    it, "remote" for ssh, "local" for a shell or a launcher the guard does not know."""
-    kind = ""
+    it, "remote" for ssh (with the hosts), "local" for a shell or a launcher the guard does not know."""
+    kind, hosts = "", ()
     for seg in chain:
         w = strip_wrappers(seg["words"])
         if not w or (args_are_data(w) and not indirect_runner(seg["words"])) or os.path.basename(w[0]) in tools:
             continue
         if INTERPRETERS.fullmatch(os.path.basename(w[0])) and not indirect_runner(seg["words"]):
             continue
-        kind = "remote" if kind == "remote" or "ssh" in map(os.path.basename, w) else "local"
-    return kind
+        names = [os.path.basename(t) for t in w]
+        if "ssh" in names:
+            target = ssh_target(w[names.index("ssh") + 1 :])
+            hosts += ((host_name(target[0]) if target else "") or "?",)
+        kind = "remote" if kind == "remote" or "ssh" in names else "local"
+    return kind, hosts
 
 
 def shell_args(args: list[str], late_c: bool) -> tuple[bool, bool, list[str]]:
@@ -1537,7 +1575,7 @@ def has_flag(args: list[str], flags: list[str]) -> bool:
     return False
 
 
-def rule_tools(rules: list[dict], remote: bool) -> set[str]:
+def rule_tools(rules: list[dict], remote: Hosts) -> set[str]:
     """The tools whose rules can match here: a rule for remote hosts only counts on one, or when a flag or
     an argument of the command itself can name the host."""
     return {
@@ -1548,7 +1586,7 @@ def rule_tools(rules: list[dict], remote: bool) -> set[str]:
     }
 
 
-def match_rules(tool: str, args: list[str], rules: list[dict], remote: bool, bare: bool, text: str) -> list[dict]:
+def match_rules(tool: str, args: list[str], rules: list[dict], remote: Hosts, bare: bool, text: str) -> list[dict]:
     """Rule hits for one candidate command. `bare` is False where the tool name may be a plain argument of
     another command, so rules that need no verb do not match there."""
     hits = []
@@ -1556,15 +1594,15 @@ def match_rules(tool: str, args: list[str], rules: list[dict], remote: bool, bar
         if tool not in rule["tools"]:
             continue
         pos, lead = positionals(args, set(rule.get("value_flags", [])))
-        on_remote = remote or any(a.split("=")[0] in rule.get("remote_flags", []) for a in args)
-        if rule.get("remote_target"):
-            on_remote = on_remote or bool(pos and re.search(rule["remote_target"], pos[-1]))
-        if rule.get("remote_only") and not on_remote:
+        flagged = any(a.split("=")[0] in rule.get("remote_flags", []) for a in args)
+        targeted = bool(rule.get("remote_target") and pos and re.search(rule["remote_target"], pos[-1]))
+        if rule.get("remote_only") and not (remote or flagged or targeted):
             continue
+        hosts = remote + (("?",) if flagged else ()) + ((host_name(pos[-1]),) if targeted else ())
         flags = rule.get("danger_flags", [])
         danger = next((a for a in args if a in flags or a.split("=")[0] in flags), None)
         if danger:
-            hits.append(guard_hit(tool, danger, rule["reason"], text))
+            hits.append(rule_hit(tool, danger, rule, text, hosts))
             continue
         if set(rule.get("safe_flags", [])) & set(args):
             continue
@@ -1587,7 +1625,7 @@ def match_rules(tool: str, args: list[str], rules: list[dict], remote: bool, bar
                     matched = verb or tool
                     break
         if matched is not None:
-            hits.append(guard_hit(tool, matched, rule["reason"], text))
+            hits.append(rule_hit(tool, matched, rule, text, hosts))
     return hits
 
 
@@ -1605,7 +1643,7 @@ def writes_guard_files(seg: dict) -> bool:
     return any(guard_path(t) for t in seg["outs"]) or (not reads and any(guard_path(t) for t in w[1:]))
 
 
-def classify_segment(seg: dict, raw: str, rules: list[dict], tools: set[str], remote: bool, depth: int) -> list[dict]:
+def classify_segment(seg: dict, raw: str, rules: list[dict], tools: set[str], remote: Hosts, depth: int) -> list[dict]:
     """Hits for one simple command: what its own words show, or a hold when it runs commands the guard does
     not read on a command line that names a rule tool."""
     hits = literal_hits(seg, raw, rules, tools, remote, depth)
@@ -1619,7 +1657,7 @@ def classify_segment(seg: dict, raw: str, rules: list[dict], tools: set[str], re
     return hits
 
 
-def literal_hits(seg: dict, raw: str, rules: list[dict], tools: set[str], remote: bool, depth: int) -> list[dict]:
+def literal_hits(seg: dict, raw: str, rules: list[dict], tools: set[str], remote: Hosts, depth: int) -> list[dict]:
     """Hits in the words of one simple command: every rule tool, and every shell, ssh, eval, su, or watch payload."""
     w = strip_wrappers(seg["words"])
     hits: list[dict] = []
@@ -1662,19 +1700,21 @@ def literal_hits(seg: dict, raw: str, rules: list[dict], tools: set[str], remote
             if fed and args[:1] and args[0] in STDIN_PATHS and names_tool(raw, tools):
                 hits.append(guard_hit(name, "stdin", "a shell reads commands that name an infra tool", text))
         elif name == "ssh":
-            j = 0
-            while j < len(args) and args[j].startswith("-"):
-                j += 2 if len(args[j]) == 2 and args[j][1] in SSH_VALUE_FLAGS else 1
-            if j >= len(args):
+            target = ssh_target(args)
+            if target is None:
                 continue
-            host, rest = args[j], args[j + 1 :]
+            host, rest = target
             rest = rest[1:] if rest[:1] == ["--"] else rest
-            sub = classify(" ".join(rest), rules, True, depth + 1) if rest else []
+            hops = remote + (host_name(host) or "?",)
+            sub = classify(" ".join(rest), rules, hops, depth + 1) if rest else []
             words = " ".join(rest).split()
             inner = strip_wrappers(words)
             reads = not inner or os.path.basename(inner[0]) in SHELLS or indirect_runner(words)
-            if fed and reads and names_tool(raw, rule_tools(rules, True)):
-                sub.append(guard_hit("ssh", "stdin", "a remote shell reads commands that name an infra tool", text))
+            if fed and reads and names_tool(raw, rule_tools(rules, hops)):
+                hit = guard_hit("ssh", "stdin", "a remote shell reads commands that name an infra tool", text)
+                if not names_tool(raw, rule_tools(rules, ())):  # only host-local tools: a trusted host may skip it
+                    hit["remote_only"], hit["hosts"] = True, list(hops)
+                sub.append(hit)
             hits += [dict(h, remote=host) for h in sub]
             break
         elif name in ("su", "runuser"):
@@ -1691,7 +1731,7 @@ def literal_hits(seg: dict, raw: str, rules: list[dict], tools: set[str], remote
     return hits
 
 
-def classify(cmd: str, rules: list[dict], remote: bool = False, depth: int = 0) -> list[dict]:
+def classify(cmd: str, rules: list[dict], remote: Hosts = (), depth: int = 0) -> list[dict]:
     """Rule hits for a shell command. Text the guard cannot read (too deeply nested, or unparsable and
     naming a rule tool) is a hit."""
     if depth > MAX_DEPTH:
@@ -1712,7 +1752,7 @@ def classify(cmd: str, rules: list[dict], remote: bool = False, depth: int = 0) 
             end = k + 1
             while end < len(segs) and (segs[end - 1]["pipe_out"] or segs[end]["pipe_in"]):
                 end += 1
-            kind = stdin_consumer(segs[k:end], tools - launchers)
+            kind, hops = stdin_consumer(segs[k:end], tools - launchers)
             scripts = [body for body, _ in seg["docs"]] + seg["strings"] if kind else []
             for body, quoted in [] if kind else seg["docs"]:
                 if not quoted:  # the shell expands an unquoted body before anything reads it
@@ -1721,7 +1761,7 @@ def classify(cmd: str, rules: list[dict], remote: bool = False, depth: int = 0) 
                     except GuardParseError:
                         hits += unparsed(body, tools)
             for text in scripts:
-                hits += classify(text, rules, remote or kind == "remote", depth + 1)
+                hits += classify(text, rules, remote + hops if kind == "remote" else remote, depth + 1)
         hits += classify_segment(dict(seg, named=named), cmd, rules, tools, remote, depth)
     return hits
 
@@ -1758,6 +1798,10 @@ def guard_config() -> dict:
             cfg["mode"] = "ask"
     if cfg["mode"] not in GUARD_MODES:
         cfg["mode"] = "ask"
+    hosts = cfg.get("trusted_hosts", [])
+    if not (isinstance(hosts, list) and all(isinstance(h, str) for h in hosts)):
+        hosts = []  # an unreadable list trusts nothing
+    cfg["trusted_hosts"] = sorted({h for h in map(host_name, hosts) if h})
     env = os.environ.get("IDSTACK_GUARD_MODE")
     if env:  # the environment can raise the mode, never lower it; an unknown value means ask
         env = env if env in GUARD_MODES else "ask"
@@ -1812,7 +1856,7 @@ def consume_allow(cmd: str, cwd: str) -> bool:
 
 
 def guard_decide(cmd: str, cfg: dict) -> dict:
-    hits = classify(cmd, load_rules())
+    hits = drop_trusted(classify(cmd, load_rules()), trusted_hosts(cfg))
     source = "rules"
     if not hits and cfg.get("jev") and os.environ.get("TYPESAFE_API_KEY") and is_ambiguous(cmd):
         battery = load_battery("guard-ambiguous")
@@ -2114,6 +2158,27 @@ def cmd_guard(a) -> int:
             cfg, a.json, f"guard mode {cfg['mode']}, jev {'on' if cfg['jev'] else 'off'} ({CONFIG_DIR / 'guard.json'})"
         )
         return EXIT_OK
+    if a.action in ("trust", "untrust"):
+        hosts = {h for h in map(host_name, a.command) if h}
+        if not hosts:
+            raise usage_error(f"guard {a.action} needs one or more hosts")
+        path = CONFIG_DIR / "guard.json"
+        try:
+            doc = json.loads(path.read_text()) if path.is_file() else {"mode": "off", "jev": False}
+            if not isinstance(doc, dict):
+                raise TypeError("not an object")
+        except (OSError, ValueError, TypeError) as e:
+            return fail(a, f"cannot read {path} ({e}); fix or remove it first", EXIT_FAIL)
+        have = trusted_hosts(doc)
+        doc["trusted_hosts"] = sorted(have | hosts if a.action == "trust" else have - hosts)
+        CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(doc, indent=2) + "\n")
+        emit(
+            {"trusted_hosts": doc["trusted_hosts"]},
+            a.json,
+            "trusted hosts: " + (", ".join(doc["trusted_hosts"]) or "none"),
+        )
+        return EXIT_OK
     if a.action == "status":
         cfg = guard_config()
         log = STATE_DIR / "guard.log"
@@ -2121,7 +2186,10 @@ def cmd_guard(a) -> int:
         emit(
             {"config": cfg, "recent": [json.loads(x) for x in recent]},
             a.json,
-            f"mode {cfg['mode']}, jev {'on' if cfg['jev'] else 'off'}\n" + "\n".join(recent),
+            f"mode {cfg['mode']}, jev {'on' if cfg['jev'] else 'off'}, trusted hosts: "
+            + (", ".join(cfg["trusted_hosts"]) or "none")
+            + "\n"
+            + "\n".join(recent),
         )
         return EXIT_OK
     if a.action == "allow-once":
@@ -2277,12 +2345,25 @@ def main() -> int:
         ),
     )
     p.add_argument(
-        "action", choices=("hook", "test", "enable", "disable", "status", "allow-once", "install", "uninstall")
+        "action",
+        choices=(
+            "hook",
+            "test",
+            "enable",
+            "disable",
+            "status",
+            "allow-once",
+            "install",
+            "uninstall",
+            "trust",
+            "untrust",
+        ),
     )
     p.add_argument(
         "command",
         nargs="*",
-        help="command for test or allow-once; quote it as one argument, since allow-once matches the exact text",
+        help="command for test or allow-once (quote it as one argument, since allow-once matches the exact text), "
+        "or the hosts for trust and untrust",
     )
     p.add_argument("--cwd", help="directory the held command runs in, for allow-once (default: the current one)")
     p.add_argument("--harness", choices=("claude", "codex", "opencode"), default="claude")

@@ -158,6 +158,21 @@ ArgoCD, Flux, Ansible, Velero, Proxmox, and libvirt, it holds:
   `guard-allow.json`, or names them or the guard's config or state directory in a command other
   than a plain reader such as `cat`, `jq`, or `grep`.
 
+**Trusted hosts.** The remote-only rules above (`rm`, `kill`, `service`, `systemctl`, `docker rm`, package
+removal, `zfs`, reboot, `rsync --delete`) are noise on a box you run yourself. List it and they stop holding:
+
+```sh
+idstack guard trust devbox buildbox       # adds to trusted_hosts in guard.json; untrust removes
+```
+
+A remote-only hit is dropped only when every hop it ran behind is listed (`ssh prod ssh devbox rm x` is still held),
+or, for `rsync --delete`, when the remote target is listed. Hosts match by name, case-insensitively, after
+`user@` and `:port` are dropped; there are no globs. Rules for infra tools (`terraform`, `kubectl`, `ansible`,
+cloud CLIs, `gh pr merge`) stay held behind a trusted host, and so does `systemctl -H`, which names no hop. Only the
+operator can edit the list: an agent running `guard trust` or touching `guard.json` is held.
+`guard status` shows it. The match is on the name you type, so an `ssh` alias or `-o HostName=` that points
+elsewhere is not seen.
+
 A heredoc is skipped only when nothing after it can run it (`cat` to a file, `gh ... --body-file -`),
 so a commit message or PR body that mentions a destructive command passes. A quoted string that is
 data, such as a `grep` pattern, passes too.
@@ -385,7 +400,8 @@ older than 4.4, which prints only `ok`, `errors`, and `exit_code`.
 | `idstack judge` without `TYPESAFE_API_KEY` | `used` (false), `reason`; exits 4 |
 | `idstack guard test` | `match`, `hits`, `source` |
 | `idstack guard enable`, `disable` | `mode`, `jev` |
-| `idstack guard status` | `config`, `recent` |
+| `idstack guard status` | `config` (with `trusted_hosts`), `recent` |
+| `idstack guard trust`, `untrust` | `trusted_hosts` |
 | `idstack guard allow-once` | `allowed`, `ttl`, `cwd` |
 | `idstack guard install`, `uninstall` | `harness`, `path`, `uninstall`, `changed`, `dry_run` and `config` (with `--dry-run`), `plugin_hook` (Codex: the plugin's hook file, or null) |
 
